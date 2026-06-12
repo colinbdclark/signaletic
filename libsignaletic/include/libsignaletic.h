@@ -818,6 +818,15 @@ extern struct sig_AllocatorImpl sig_TLSFAllocatorImpl;
 
 
 /**
+ * Allocates a new raw sample array.
+ *
+ * @param allocator the allocator to use
+ * @param length the size of the array in samples
+ */
+float_array_ptr sig_samples_new(struct sig_Allocator* allocator,
+    size_t length);
+
+/**
  * @brief An xoshiro128+-based pseudo-random number generator.
  *
  * xoshiro128+ 1.0 by David Blackman and
