@@ -4526,6 +4526,58 @@ void test_sig_tempo_TempoEstimator_holdsEstablishedLevel(void) {
     sig_tempo_TempoEstimator_destroy(&allocator, estimator);
 }
 
+void test_sig_tempo_TempoEstimator_followsTempoAfterLongRun(void) {
+    // Clicks of random strength at 120 BPM over low random noise for 10
+    // minutes, then clicks at 120 BPM without noise for 9 seconds, then
+    // 10 seconds of silence, then clicks at 90 BPM for 9 seconds, at an
+    // envelope rate of 86 values per second. The clicks without noise
+    // replace the noise in the window before the silence, because the
+    // estimator follows noise when its window contains no pairs of
+    // clicks.
+    float envelopeRate = 86.0f;
+    size_t fastInterval = 43;
+    size_t slowInterval = 57;
+    size_t numNoisy = 51600;
+    size_t numFast = numNoisy + 774;
+    size_t numSilent = 860;
+    size_t numSlow = 774;
+    struct sig_Random* random = sig_Random_new(&allocator, 7);
+
+    struct sig_tempo_TempoEstimator* estimator =
+        sig_tempo_TempoEstimator_new(&allocator, envelopeRate, 30.0f,
+            200.0f);
+
+    float tempo = 0.0f;
+    for (size_t i = 0; i < numFast; i++) {
+        bool isNoisy = i < numNoisy;
+        float value = 0.0f;
+        if (i % fastInterval == 0) {
+            value = isNoisy ? 0.3f + 0.7f * sig_Random_nextFloat(random) :
+                1.0f;
+        } else if (isNoisy) {
+            value = 0.02f * sig_Random_nextFloat(random);
+        }
+        tempo = sig_tempo_TempoEstimator_generate(estimator, value);
+    }
+    TEST_ASSERT_FLOAT_WITHIN(3.0f, 120.0f, tempo);
+
+    // The estimate holds through the silence.
+    for (size_t i = 0; i < numSilent; i++) {
+        tempo = sig_tempo_TempoEstimator_generate(estimator, 0.0f);
+    }
+    TEST_ASSERT_FLOAT_WITHIN(3.0f, 120.0f, tempo);
+
+    // The estimator finds the new tempo once the window contains it.
+    for (size_t i = 0; i < numSlow; i++) {
+        float value = i % slowInterval == 0 ? 1.0f : 0.0f;
+        tempo = sig_tempo_TempoEstimator_generate(estimator, value);
+    }
+    TEST_ASSERT_FLOAT_WITHIN(3.0f, 90.0f, tempo);
+
+    sig_tempo_TempoEstimator_destroy(&allocator, estimator);
+    sig_Random_destroy(&allocator, random);
+}
+
 void test_sig_tempo_TempoEstimator_restrictsTempoRange(void) {
     // One impulse every 86 values is 60 BPM at 86 values per second.
     float envelopeRate = 86.0f;
@@ -6202,6 +6254,7 @@ int main(void) {
     RUN_TEST(test_sig_tempo_TempoEstimator_holdsTempoInSilence);
     RUN_TEST(test_sig_tempo_TempoEstimator_restrictsTempoRange);
     RUN_TEST(test_sig_tempo_TempoEstimator_holdsEstablishedLevel);
+    RUN_TEST(test_sig_tempo_TempoEstimator_followsTempoAfterLongRun);
     RUN_TEST(test_sig_tempo_BeatTracker_runsAtEstimatedTempo);
     RUN_TEST(test_sig_tempo_BeatTracker_locksToSteadyBeats);
     RUN_TEST(test_sig_tempo_BeatTracker_followsRitardando);

@@ -2328,12 +2328,19 @@ public:
         return sig_tempo_calcWindowLength(envelopeRate, lowestTempo);
     }
 
+    size_t tempo_TempoEstimator_calcNumLags(float envelopeRate,
+        float lowestTempo) {
+        return sig_tempo_TempoEstimator_calcNumLags(envelopeRate,
+            lowestTempo);
+    }
+
     void tempo_TempoEstimator_init(
         struct sig_tempo_TempoEstimator* tempoEstimator, float envelopeRate,
         float lowestTempo, float highestTempo, float_array_ptr envelope,
-        float_array_ptr scores) {
+        float_array_ptr scores, void* autocorrelation) {
         sig_tempo_TempoEstimator_init(tempoEstimator, envelopeRate,
-            lowestTempo, highestTempo, envelope, scores);
+            lowestTempo, highestTempo, envelope, scores,
+            (double*) autocorrelation);
     }
 
     struct sig_tempo_TempoEstimator* tempo_TempoEstimator_new(

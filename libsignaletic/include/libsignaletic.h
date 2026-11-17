@@ -2847,10 +2847,14 @@ void sig_tempo_OnsetDetector_destroy(struct sig_Allocator* allocator,
  * @brief A tempo estimator that tracks the tempo of an onset strength
  * envelope.
  *
- * The estimator keeps an 8-second window of envelope values. Every 16
- * values, it scores each candidate tempo in its current range, in steps
- * of 1 BPM, by autocorrelating the window at the candidate's beat
- * interval and at twice that interval. A log-normal prior, centred at
+ * The estimator keeps an 8-second window of envelope values, and the
+ * window's autocorrelation at every whole lag up to twice the beat
+ * interval of the slowest tempo. It updates the autocorrelation as each
+ * value enters and leaves the window, so that its work is spread evenly
+ * across the values. Every 16 values, it scores each candidate tempo in
+ * its current range, in steps of 1 BPM, by its autocorrelation at the
+ * candidate's beat interval and at twice that interval, interpolated
+ * between the neighbouring whole lags. A log-normal prior, centred at
  * 120 BPM with a width of one octave, weights the scores, so that
  * octave-related tempos resolve to a consistent metrical level. The
  * estimator adopts the best candidate immediately when it lies within
@@ -2946,6 +2950,23 @@ struct sig_tempo_TempoEstimator {
     float_array_ptr scores;
 
     /**
+     * @brief The number of whole lags at which the estimator keeps the
+     * window's autocorrelation, starting from zero.
+     */
+    size_t numLags;
+
+    /**
+     * @brief The sum of the products of each pair of values in the
+     * window that lie a whole lag apart, for each lag from zero to
+     * numLags - 1.
+     *
+     * Contains numLags values. The sums are double precision because the
+     * estimator adds and subtracts every product once, and single
+     * precision would accumulate rounding error over hours of use.
+     */
+    double* autocorrelation;
+
+    /**
      * @brief The position in envelope where the next value is written,
      * wrapping at windowLength.
      */
@@ -2985,6 +3006,21 @@ struct sig_tempo_TempoEstimator {
 size_t sig_tempo_calcWindowLength(float envelopeRate, float lowestTempo);
 
 /**
+ * @brief Calculates the number of whole lags at which a tempo estimator
+ * keeps its window's autocorrelation.
+ *
+ * The lags reach one beyond twice the beat interval of the slowest
+ * tempo, so that the estimator can interpolate at any candidate's
+ * doubled beat interval.
+ *
+ * @param envelopeRate the number of envelope values per second
+ * @param lowestTempo the slowest tempo, in beats per minute
+ * @return the number of lags
+ */
+size_t sig_tempo_TempoEstimator_calcNumLags(float envelopeRate,
+    float lowestTempo);
+
+/**
  * @brief Initialises a tempo estimator, clearing its window and state.
  *
  * The estimator considers every tempo from lowestTempo to highestTempo
@@ -2999,10 +3035,14 @@ size_t sig_tempo_calcWindowLength(float envelopeRate, float lowestTempo);
  * returns
  * @param scores an array of (highestTempo - lowestTempo + 1) values,
  * which is cleared
+ * @param autocorrelation an array of numLags doubles, which is cleared,
+ * where numLags is the value that sig_tempo_TempoEstimator_calcNumLags
+ * returns
  */
 void sig_tempo_TempoEstimator_init(struct sig_tempo_TempoEstimator* self,
     float envelopeRate, float lowestTempo, float highestTempo,
-    float_array_ptr envelope, float_array_ptr scores);
+    float_array_ptr envelope, float_array_ptr scores,
+    double* autocorrelation);
 
 /**
  * @brief Allocates and initialises a tempo estimator.

@@ -1718,54 +1718,116 @@ size_t sig_tempo_calcWindowLength(float envelopeRate, float lowestTempo) {
         lowestTempo);
 }
 
-// Reads the estimator's window at a fractional position, where zero
-// is the oldest value in the window.
+size_t sig_tempo_TempoEstimator_calcNumLags(float envelopeRate,
+    float lowestTempo) {
+    float longestInterval = envelopeRate * 60.0f / lowestTempo;
+    return (size_t) floorf(2.0f * longestInterval) + 2;
+}
+
+// Returns the number of values in the estimator's window.
+static size_t sig_tempo_TempoEstimator_available(
+    struct sig_tempo_TempoEstimator* self) {
+    return self->valueCount < self->windowLength ?
+        self->valueCount : self->windowLength;
+}
+
+// Removes the products of the oldest value in the full window from the
+// running autocorrelation, before the estimator overwrites the value.
+static void sig_tempo_TempoEstimator_removeOldest(
+    struct sig_tempo_TempoEstimator* self) {
+    const size_t windowLength = self->windowLength;
+    const size_t numLags = self->numLags < windowLength ?
+        self->numLags : windowLength;
+    const size_t oldestIdx = self->writeIdx;
+    const float* SIG_RESTRICT envelope = FLOAT_ARRAY(self->envelope);
+    double* SIG_RESTRICT autocorrelation = self->autocorrelation;
+    const double oldest = envelope[oldestIdx];
+
+    for (size_t lag = 0; lag < numLags; lag++) {
+        size_t idx = oldestIdx + lag;
+        if (idx >= windowLength) {
+            idx -= windowLength;
+        }
+        autocorrelation[lag] -= oldest * envelope[idx];
+    }
+}
+
+// Adds the products of the newest value, which the estimator has just
+// written at writeIdx, to the running autocorrelation.
+static void sig_tempo_TempoEstimator_addNewest(
+    struct sig_tempo_TempoEstimator* self) {
+    const size_t windowLength = self->windowLength;
+    const size_t available = sig_tempo_TempoEstimator_available(self);
+    const size_t numLags = self->numLags < available ?
+        self->numLags : available;
+    const size_t newestIdx = self->writeIdx;
+    const float* SIG_RESTRICT envelope = FLOAT_ARRAY(self->envelope);
+    double* SIG_RESTRICT autocorrelation = self->autocorrelation;
+    const double newest = envelope[newestIdx];
+
+    for (size_t lag = 0; lag < numLags; lag++) {
+        size_t idx = newestIdx >= lag ? newestIdx - lag :
+            newestIdx + windowLength - lag;
+        autocorrelation[lag] += newest * envelope[idx];
+    }
+}
+
+// Returns the value at a position in the window, where zero is the
+// oldest value.
 static float sig_tempo_TempoEstimator_readWindow(
-    const float* SIG_RESTRICT envelope, size_t windowLength, size_t start,
-    size_t available, float position) {
-    size_t index = (size_t) position;
-    float fraction = position - (float) index;
-    size_t next = index + 1 < available ? index + 1 : index;
-    float first = envelope[(start + index) % windowLength];
-    float second = envelope[(start + next) % windowLength];
-    return first + fraction * (second - first);
+    struct sig_tempo_TempoEstimator* self, size_t available,
+    size_t position) {
+    // While the window is filling, the oldest value is the first one
+    // written.
+    size_t start = available == self->windowLength ? self->writeIdx : 0;
+    size_t idx = start + position;
+    if (idx >= self->windowLength) {
+        idx -= self->windowLength;
+    }
+
+    return FLOAT_ARRAY(self->envelope)[idx];
 }
 
 // Returns the window's autocorrelation at a lag, divided by the number
-// of overlapping values, or zero when the lag leaves no overlap.
+// of overlapping values, or zero when the lag leaves no overlap. The
+// estimator interpolates the envelope linearly between values, and
+// reads the newest value in place of the value after it. At a
+// fractional lag, the autocorrelation therefore interpolates between the
+// running sums at the neighbouring whole lags, and the upper sum gains
+// the product of the last overlapping value and the newest value.
 static float sig_tempo_TempoEstimator_autocorrelate(
-    const float* SIG_RESTRICT envelope, size_t windowLength, size_t start,
-    size_t available, float lag) {
+    struct sig_tempo_TempoEstimator* self, size_t available, float lag) {
     float overlap = (float) available - lag;
     if (overlap < 1.0f) {
         return 0.0f;
     }
 
-    float sum = 0.0f;
-    for (size_t n = 0; (float) n < overlap; n++) {
-        float first = sig_tempo_TempoEstimator_readWindow(envelope,
-            windowLength, start, available, (float) n);
-        float second = sig_tempo_TempoEstimator_readWindow(envelope,
-            windowLength, start, available, (float) n + lag);
-        sum += first * second;
+    size_t whole = (size_t) lag;
+    if (whole + 1 >= self->numLags) {
+        return 0.0f;
     }
 
-    return sum / overlap;
+    const double* SIG_RESTRICT autocorrelation = self->autocorrelation;
+    double fraction = (double) (lag - (float) whole);
+    double sum = autocorrelation[whole];
+    if (fraction > 0.0) {
+        double edge = (double) sig_tempo_TempoEstimator_readWindow(self,
+            available, available - whole - 1) *
+            (double) sig_tempo_TempoEstimator_readWindow(self, available,
+                available - 1);
+        sum = (1.0 - fraction) * sum +
+            fraction * (autocorrelation[whole + 1] + edge);
+    }
+
+    return (float) (sum / (double) overlap);
 }
 
 // Scores every candidate in the current range, and returns the index
 // of the best one.
 static size_t sig_tempo_TempoEstimator_scoreCandidates(
     struct sig_tempo_TempoEstimator* self, float* bestScore) {
-    const size_t windowLength = self->windowLength;
-    const size_t available = self->valueCount < windowLength ?
-        self->valueCount : windowLength;
-    const float* SIG_RESTRICT envelope = FLOAT_ARRAY(self->envelope);
+    const size_t available = sig_tempo_TempoEstimator_available(self);
     float* SIG_RESTRICT scores = FLOAT_ARRAY(self->scores);
-
-    // The window starts at the oldest value. While it is filling, the
-    // oldest value is the first one written.
-    const size_t start = available == windowLength ? self->writeIdx : 0;
     const float lagLimit = (float) available / 2.0f;
     const size_t first = (size_t) ceilf((self->minTempo - self->lowestTempo) /
         self->candidateStep);
@@ -1792,11 +1854,10 @@ static size_t sig_tempo_TempoEstimator_scoreCandidates(
         // The autocorrelation at twice the beat interval lets a
         // candidate score on onsets that fall only on alternate beats,
         // so that a narrowed range can select a faster metrical level.
-        float score = sig_tempo_TempoEstimator_autocorrelate(envelope,
-            windowLength, start, available, lag) +
-            SIG_TEMPO_DOUBLE_INTERVAL_WEIGHT *
-            sig_tempo_TempoEstimator_autocorrelate(envelope,
-                windowLength, start, available, 2.0f * lag);
+        float score = sig_tempo_TempoEstimator_autocorrelate(self,
+            available, lag) + SIG_TEMPO_DOUBLE_INTERVAL_WEIGHT *
+            sig_tempo_TempoEstimator_autocorrelate(self, available,
+                2.0f * lag);
 
         // Weight the score with a log-normal tempo prior, so that
         // octave-related tempos resolve to a consistent level.
@@ -1891,7 +1952,8 @@ static float sig_tempo_TempoEstimator_estimate(
 
 void sig_tempo_TempoEstimator_init(struct sig_tempo_TempoEstimator* self,
     float envelopeRate, float lowestTempo, float highestTempo,
-    float_array_ptr envelope, float_array_ptr scores) {
+    float_array_ptr envelope, float_array_ptr scores,
+    double* autocorrelation) {
     self->envelopeRate = envelopeRate;
     self->lowestTempo = lowestTempo;
     self->highestTempo = highestTempo;
@@ -1909,6 +1971,9 @@ void sig_tempo_TempoEstimator_init(struct sig_tempo_TempoEstimator* self,
         SIG_TEMPO_MINIMUM_BEATS * 60.0f / highestTempo);
     self->envelope = envelope;
     self->scores = scores;
+    self->numLags = sig_tempo_TempoEstimator_calcNumLags(envelopeRate,
+        lowestTempo);
+    self->autocorrelation = autocorrelation;
     self->writeIdx = 0;
     self->valueCount = 0;
     self->tempo = 0.0f;
@@ -1916,6 +1981,9 @@ void sig_tempo_TempoEstimator_init(struct sig_tempo_TempoEstimator* self,
 
     sig_fillWithSilence(envelope, self->windowLength);
     sig_fillWithSilence(scores, self->numCandidates);
+    for (size_t lag = 0; lag < self->numLags; lag++) {
+        autocorrelation[lag] = 0.0;
+    }
 }
 
 struct sig_tempo_TempoEstimator* sig_tempo_TempoEstimator_new(
@@ -1927,10 +1995,14 @@ struct sig_tempo_TempoEstimator* sig_tempo_TempoEstimator_new(
         lowestTempo);
     size_t numCandidates = (size_t) ((highestTempo - lowestTempo) /
         SIG_TEMPO_CANDIDATE_STEP) + 1;
+    size_t numLags = sig_tempo_TempoEstimator_calcNumLags(envelopeRate,
+        lowestTempo);
+    double* autocorrelation = (double*) allocator->impl->malloc(allocator,
+        numLags * sizeof(double));
 
     sig_tempo_TempoEstimator_init(self, envelopeRate, lowestTempo,
         highestTempo, sig_samples_new(allocator, windowLength),
-        sig_samples_new(allocator, numCandidates));
+        sig_samples_new(allocator, numCandidates), autocorrelation);
 
     return self;
 }
@@ -1941,12 +2013,16 @@ extern inline void sig_tempo_TempoEstimator_setTempoRange(
 float sig_tempo_TempoEstimator_generate(struct sig_tempo_TempoEstimator* self,
     float value) {
     float* SIG_RESTRICT envelope = FLOAT_ARRAY(self->envelope);
+    if (self->valueCount >= self->windowLength) {
+        sig_tempo_TempoEstimator_removeOldest(self);
+    }
     envelope[self->writeIdx] = value;
+    self->valueCount++;
+    sig_tempo_TempoEstimator_addNewest(self);
     self->writeIdx++;
     if (self->writeIdx == self->windowLength) {
         self->writeIdx = 0;
     }
-    self->valueCount++;
 
     if (self->valueCount >= self->minimumValues &&
         self->valueCount % self->estimateInterval == 0) {
@@ -1960,6 +2036,7 @@ void sig_tempo_TempoEstimator_destroy(struct sig_Allocator* allocator,
     struct sig_tempo_TempoEstimator* self) {
     allocator->impl->free(allocator, self->envelope);
     allocator->impl->free(allocator, self->scores);
+    allocator->impl->free(allocator, self->autocorrelation);
     allocator->impl->free(allocator, self);
 }
 

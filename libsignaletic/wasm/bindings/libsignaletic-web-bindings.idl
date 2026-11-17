@@ -1984,9 +1984,11 @@ interface Signaletic {
 
     unsigned long tempo_calcWindowLength(float envelopeRate,
         float lowestTempo);
+    unsigned long tempo_TempoEstimator_calcNumLags(float envelopeRate,
+        float lowestTempo);
     void tempo_TempoEstimator_init(sig_tempo_TempoEstimator tempoEstimator,
         float envelopeRate, float lowestTempo, float highestTempo,
-        any envelope, any scores);
+        any envelope, any scores, any autocorrelation);
     sig_tempo_TempoEstimator tempo_TempoEstimator_new(
         sig_Allocator allocator, float envelopeRate, float lowestTempo,
         float highestTempo);
