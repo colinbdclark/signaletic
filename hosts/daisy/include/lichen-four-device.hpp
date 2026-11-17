@@ -99,8 +99,9 @@ namespace four {
             InputBank<Toggle, NUM_BUTTONS> buttonBank;
             BufferedAnalogOutput dacChannels[NUM_DAC_CHANNELS];
             OutputBank<BufferedAnalogOutput, NUM_DAC_CHANNELS> dacOutputBank;
-            GateInput gateInputs[NUM_GATES];
-            InputBank<GateInput, NUM_GATES> gateInputBank;
+            EdgeTimedGateInput gateInputs[NUM_GATES];
+            float gateValues[NUM_GATES] = {0.0f};
+            float* gateBlocks[NUM_GATES] = {NULL};
             GPIOOutput gpioOutputs[NUM_GPIO_OUTPUTS];
             OutputBank<GPIOOutput, NUM_GPIO_OUTPUTS> gpioOutputBank;
 
@@ -109,7 +110,7 @@ namespace four {
             static void onEvaluateSignals(size_t size,
                 struct sig_host_HardwareInterface* hardware) {
                 FourDevice* self = static_cast<FourDevice*> (hardware->userData);
-                self->Read();
+                self->Read(size);
             }
 
             static void afterEvaluateSignals(size_t size,
@@ -140,7 +141,8 @@ namespace four {
                     .numDACChannels = NUM_DAC_CHANNELS,
                     .dacChannels = dacOutputBank.values,
                     .numGateInputs = NUM_GATES,
-                    .gateInputs = gateInputBank.values,
+                    .gateInputs = gateValues,
+                    .gateInputBlocks = gateBlocks,
                     .numGPIOOutputs = NUM_GPIO_OUTPUTS,
                     .gpioOutputs = gpioOutputBank.values,
                     .numToggles = NUM_BUTTONS,
@@ -167,8 +169,10 @@ namespace four {
             void InitControls() {
                 buttons[0].Init(BUTTON_PINS[0]);
                 buttonBank.inputs = buttons;
-                gateInputs[0].Init(GATE_INPUT_PINS[0]);
-                gateInputBank.inputs = gateInputs;
+                for (size_t i = 0; i < NUM_GATES; i++) {
+                    gateInputs[i].Init(GATE_INPUT_PINS[i]);
+                    gateBlocks[i] = gateInputs[i].samples;
+                }
 
                 for (size_t i = 0; i < NUM_GPIO_OUTPUTS; i++) {
                     gpioOutputs[i].Init(GPIO_OUTPUT_PINS[i],
@@ -189,10 +193,14 @@ namespace four {
                 board.audio.Stop();
             }
 
-            inline void Read() {
+            inline void Read(size_t blockSize) {
                 adcController.Read();
                 buttonBank.Read();
-                gateInputBank.Read();
+
+                for (size_t i = 0; i < NUM_GATES; i++) {
+                    gateInputs[i].Read(blockSize);
+                    gateValues[i] = gateInputs[i].state;
+                }
             }
 
             inline void Write() {

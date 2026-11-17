@@ -484,6 +484,15 @@ void test_sig_AudioSettings_new(void) {
     sig_AudioSettings_destroy(&allocator, s);
 }
 
+void test_sig_MALLOC_acceptsAddressOfAllocator(void) {
+    // The allocator argument can be any expression, such as the address of
+    // an allocator struct.
+    struct sig_osc_Oscillator* oscillator = sig_MALLOC(&allocator,
+        struct sig_osc_Oscillator);
+    TEST_ASSERT_NOT_NULL(oscillator);
+    allocator.impl->free(&allocator, oscillator);
+}
+
 void test_sig_samplesToSeconds(void) {
     struct sig_AudioSettings* s = sig_AudioSettings_new(&allocator);
 
@@ -595,6 +604,81 @@ void test_sig_osc_Wavetable_negativePhaseStaysWithinTable(void) {
         sig_osc_Wavetable_generate(&osc, 0.0f, -1.0e-9f, 44100.0f, &eoc));
 }
 
+void test_sig_FFT_forward(void) {
+    size_t length = 64;
+    struct sig_FFT* fft = sig_FFT_new(&allocator, length);
+    float_array_ptr real = sig_samples_new(&allocator, length);
+    float_array_ptr imaginary = sig_samples_new(&allocator, length);
+    for (size_t n = 0; n < length; n++) {
+        float t = sig_TWOPI * (float) n / (float) length;
+        FLOAT_ARRAY(real)[n] = 0.1f + 0.5f * cosf(3.0f * t) +
+            0.25f * sinf(5.0f * t);
+        FLOAT_ARRAY(imaginary)[n] = 0.0f;
+    }
+
+    sig_FFT_forward(fft, real, imaginary);
+
+    // The constant, the cosine, and the sine each appear in their own bins,
+    // scaled by the length. The cosine and sine are split between their
+    // positive and negative frequency bins.
+    float half = (float) length / 2.0f;
+    for (size_t k = 0; k < length; k++) {
+        float expectedReal = 0.0f;
+        float expectedImaginary = 0.0f;
+        if (k == 0) {
+            expectedReal = 0.1f * (float) length;
+        } else if (k == 3 || k == length - 3) {
+            expectedReal = 0.5f * half;
+        } else if (k == 5) {
+            expectedImaginary = -0.25f * half;
+        } else if (k == length - 5) {
+            expectedImaginary = 0.25f * half;
+        }
+        TEST_ASSERT_FLOAT_WITHIN(0.0001f, expectedReal,
+            FLOAT_ARRAY(real)[k]);
+        TEST_ASSERT_FLOAT_WITHIN(0.0001f, expectedImaginary,
+            FLOAT_ARRAY(imaginary)[k]);
+    }
+
+    sig_FFT_destroy(&allocator, fft);
+}
+
+void test_sig_FFT_inverse(void) {
+    size_t length = 64;
+    struct sig_FFT* fft = sig_FFT_new(&allocator, length);
+    float_array_ptr real = sig_samples_new(&allocator, length);
+    float_array_ptr imaginary = sig_samples_new(&allocator, length);
+    sig_fillWithSilence(real, length);
+    sig_fillWithSilence(imaginary, length);
+
+    // A single bin becomes a complex exponential at its frequency.
+    FLOAT_ARRAY(real)[2] = 1.0f;
+    sig_FFT_inverse(fft, real, imaginary);
+    for (size_t n = 0; n < length; n++) {
+        float t = sig_TWOPI * 2.0f * (float) n / (float) length;
+        TEST_ASSERT_FLOAT_WITHIN(0.0001f, cosf(t), FLOAT_ARRAY(real)[n]);
+        TEST_ASSERT_FLOAT_WITHIN(0.0001f, sinf(t),
+            FLOAT_ARRAY(imaginary)[n]);
+    }
+
+    // A forward transform followed by an inverse transform multiplies the
+    // signal by the length.
+    for (size_t n = 0; n < length; n++) {
+        FLOAT_ARRAY(real)[n] = sinf((float) n * 0.37f) + 0.2f;
+        FLOAT_ARRAY(imaginary)[n] = 0.0f;
+    }
+    sig_FFT_forward(fft, real, imaginary);
+    sig_FFT_inverse(fft, real, imaginary);
+    for (size_t n = 0; n < length; n++) {
+        TEST_ASSERT_FLOAT_WITHIN(0.001f,
+            (sinf((float) n * 0.37f) + 0.2f) * (float) length,
+            FLOAT_ARRAY(real)[n]);
+        TEST_ASSERT_FLOAT_WITHIN(0.001f, 0.0f, FLOAT_ARRAY(imaginary)[n]);
+    }
+
+    sig_FFT_destroy(&allocator, fft);
+}
+
 void test_sig_waveform_harmonicGain(void) {
     // A sine contains only its fundamental.
     TEST_ASSERT_EQUAL_FLOAT(1.0f,
@@ -644,14 +728,17 @@ void test_sig_waveform_harmonicTaper(void) {
             sig_waveform_harmonicTaper(sig_HarmonicTaper_NONE, k, 3));
     }
 
-    // Lanczos sigma factors fall smoothly towards zero
-    // just beyond the highest harmonic.
-    TEST_ASSERT_FLOAT_WITHIN(0.0001f, 0.9003163f,
+    // Lanczos sigma factors fall smoothly towards zero just beyond the
+    // highest harmonic. They are normalized so that the fundamental keeps
+    // its full gain, whatever the number of harmonics.
+    TEST_ASSERT_FLOAT_WITHIN(0.0001f, 1.0f,
         sig_waveform_harmonicTaper(sig_HarmonicTaper_LANCZOS, 1, 3));
-    TEST_ASSERT_FLOAT_WITHIN(0.0001f, 0.6366198f,
+    TEST_ASSERT_FLOAT_WITHIN(0.0001f, 0.7071068f,
         sig_waveform_harmonicTaper(sig_HarmonicTaper_LANCZOS, 2, 3));
-    TEST_ASSERT_FLOAT_WITHIN(0.0001f, 0.3001054f,
+    TEST_ASSERT_FLOAT_WITHIN(0.0001f, 0.3333333f,
         sig_waveform_harmonicTaper(sig_HarmonicTaper_LANCZOS, 3, 3));
+    TEST_ASSERT_FLOAT_WITHIN(0.0001f, 1.0f,
+        sig_waveform_harmonicTaper(sig_HarmonicTaper_LANCZOS, 1, 1));
 }
 
 void test_sig_STANDARD_WAVEFORMS(void) {
@@ -686,6 +773,85 @@ void test_sig_STANDARD_WAVEFORMS(void) {
     }
 }
 
+void test_sig_waveform_sinePhaseTriangle(void) {
+    // Like a sine, the triangle starts at zero and rises to its peak
+    // a quarter of the way through the cycle.
+    TEST_ASSERT_FLOAT_WITHIN(0.0001f, 0.0f,
+        sig_waveform_sinePhaseTriangle(0.0f));
+    TEST_ASSERT_FLOAT_WITHIN(0.0001f, 0.5f,
+        sig_waveform_sinePhaseTriangle(sig_PI / 4.0f));
+    TEST_ASSERT_FLOAT_WITHIN(0.0001f, 1.0f,
+        sig_waveform_sinePhaseTriangle(sig_PI / 2.0f));
+    TEST_ASSERT_FLOAT_WITHIN(0.0001f, 0.0f,
+        sig_waveform_sinePhaseTriangle(sig_PI));
+    TEST_ASSERT_FLOAT_WITHIN(0.0001f, -1.0f,
+        sig_waveform_sinePhaseTriangle(sig_PI * 1.5f));
+    TEST_ASSERT_FLOAT_WITHIN(0.0001f, -0.5f,
+        sig_waveform_sinePhaseTriangle(sig_PI * 1.75f));
+}
+
+void test_sig_waveform_sinePhaseSaw(void) {
+    // Like a sine, the saw starts at zero and rises. It reaches its peak
+    // halfway through the cycle, drops to its trough, and rises back to
+    // zero.
+    TEST_ASSERT_FLOAT_WITHIN(0.0001f, 0.0f, sig_waveform_sinePhaseSaw(0.0f));
+    TEST_ASSERT_FLOAT_WITHIN(0.0001f, 0.5f,
+        sig_waveform_sinePhaseSaw(sig_PI / 2.0f));
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, 1.0f,
+        sig_waveform_sinePhaseSaw(sig_PI - 0.001f));
+    TEST_ASSERT_FLOAT_WITHIN(0.001f, -1.0f,
+        sig_waveform_sinePhaseSaw(sig_PI + 0.001f));
+    TEST_ASSERT_FLOAT_WITHIN(0.0001f, -0.5f,
+        sig_waveform_sinePhaseSaw(sig_PI * 1.5f));
+}
+
+void test_sig_waveform_sinePhaseHarmonicGain(void) {
+    // The triangle contains only odd harmonics, falling by 1/k^2,
+    // with alternating signs.
+    TEST_ASSERT_EQUAL_FLOAT(8.0f / (sig_PI * sig_PI),
+        sig_waveform_sinePhaseTriangleHarmonicGain(1));
+    TEST_ASSERT_EQUAL_FLOAT(0.0f,
+        sig_waveform_sinePhaseTriangleHarmonicGain(2));
+    TEST_ASSERT_EQUAL_FLOAT(-8.0f / (9.0f * sig_PI * sig_PI),
+        sig_waveform_sinePhaseTriangleHarmonicGain(3));
+    TEST_ASSERT_EQUAL_FLOAT(8.0f / (25.0f * sig_PI * sig_PI),
+        sig_waveform_sinePhaseTriangleHarmonicGain(5));
+
+    // The saw contains every harmonic, falling by 1/k,
+    // with alternating signs.
+    TEST_ASSERT_EQUAL_FLOAT(2.0f / sig_PI,
+        sig_waveform_sinePhaseSawHarmonicGain(1));
+    TEST_ASSERT_EQUAL_FLOAT(-1.0f / sig_PI,
+        sig_waveform_sinePhaseSawHarmonicGain(2));
+    TEST_ASSERT_EQUAL_FLOAT(2.0f / (3.0f * sig_PI),
+        sig_waveform_sinePhaseSawHarmonicGain(3));
+}
+
+void test_sig_SINE_PHASE_WAVEFORMS(void) {
+    size_t numSamples = 4096;
+
+    // Every waveform's fundamental is in phase with a sine. Its cosine
+    // component is zero and its sine component is positive, both in the
+    // waveform's shape and in its harmonic series.
+    for (size_t i = 0; i < sig_StandardWaveform_COUNT; i++) {
+        const struct sig_WaveformShape* shape = &sig_SINE_PHASE_WAVEFORMS[i];
+        double sineComponent = 0.0;
+        double cosineComponent = 0.0;
+        for (size_t n = 0; n < numSamples; n++) {
+            float phase = sig_TWOPI * (float) n / (float) numSamples;
+            float sample = shape->generate(phase);
+            sineComponent += sample * sinf(phase);
+            cosineComponent += sample * cosf(phase);
+        }
+
+        TEST_ASSERT_FLOAT_WITHIN(0.01f, 0.0f,
+            (float) (2.0 * cosineComponent / (double) numSamples));
+        TEST_ASSERT_TRUE(sineComponent > 0.0);
+        TEST_ASSERT_TRUE(shape->harmonic(1) > 0.0f);
+        TEST_ASSERT_EQUAL_FLOAT(0.0f, shape->harmonicPhase);
+    }
+}
+
 struct sig_Buffer* newSineTable(size_t length) {
     struct sig_Buffer* sineTable = sig_Buffer_new(&allocator, length);
     sig_Buffer_fillWithWaveform(sineTable, sig_waveform_sine,
@@ -700,14 +866,18 @@ bool isNearDiscontinuity(float phase) {
         fabsf(phase - 0.5f) < distance;
 }
 
-void test_sig_Buffer_fillWithHarmonics_matchesWaveforms(void) {
+// Fills a table with each shape's harmonic series, and asserts that it
+// matches the shape's naive waveform.
+void testAssertHarmonicsMatchWaveforms(const struct sig_WaveformShape* shapes,
+    size_t numShapes) {
     size_t length = 4096;
-    struct sig_Buffer* sineTable = newSineTable(length);
+    struct sig_FFT* fft = sig_FFT_new(&allocator, length);
+    float_array_ptr imaginary = sig_samples_new(&allocator, length);
     struct sig_Buffer* table = sig_Buffer_new(&allocator, length);
 
-    for (size_t waveform = 0; waveform < sig_StandardWaveform_COUNT; waveform++) {
-        sig_Buffer_fillWithHarmonics(table, sineTable,
-            &sig_STANDARD_WAVEFORMS[waveform], 500, sig_HarmonicTaper_NONE);
+    for (size_t waveform = 0; waveform < numShapes; waveform++) {
+        sig_Buffer_fillWithHarmonics(table, fft, imaginary, &shapes[waveform],
+            500, sig_HarmonicTaper_NONE);
 
         // Away from discontinuities, where band-limited waveforms ring,
         // the table should match the naive waveform.
@@ -717,15 +887,25 @@ void test_sig_Buffer_fillWithHarmonics_matchesWaveforms(void) {
                 continue;
             }
 
-            float expected = sig_STANDARD_WAVEFORMS[waveform].generate(
-                phase * sig_TWOPI);
+            float expected = shapes[waveform].generate(phase * sig_TWOPI);
             TEST_ASSERT_FLOAT_WITHIN(0.01f, expected,
                 FLOAT_ARRAY(table->samples)[i]);
         }
     }
 
     sig_Buffer_destroy(&allocator, table);
-    sig_Buffer_destroy(&allocator, sineTable);
+    allocator.impl->free(&allocator, imaginary);
+    sig_FFT_destroy(&allocator, fft);
+}
+
+void test_sig_Buffer_fillWithHarmonics_matchesWaveforms(void) {
+    testAssertHarmonicsMatchWaveforms(sig_STANDARD_WAVEFORMS,
+        sig_StandardWaveform_COUNT);
+}
+
+void test_sig_Buffer_fillWithHarmonics_matchesSinePhaseWaveforms(void) {
+    testAssertHarmonicsMatchWaveforms(sig_SINE_PHASE_WAVEFORMS,
+        sig_StandardWaveform_COUNT);
 }
 
 float maxSample(float* samples, size_t length) {
@@ -741,24 +921,26 @@ float maxSample(float* samples, size_t length) {
 
 void test_sig_Buffer_fillWithHarmonics_lanczosLimitsOvershoot(void) {
     size_t length = 4096;
-    struct sig_Buffer* sineTable = newSineTable(length);
+    struct sig_FFT* fft = sig_FFT_new(&allocator, length);
+    float_array_ptr imaginary = sig_samples_new(&allocator, length);
     struct sig_Buffer* table = sig_Buffer_new(&allocator, length);
 
     // Without a taper, a square overshoots each jump of 2.0
     // by about 9%, peaking near 1.18.
-    sig_Buffer_fillWithHarmonics(table, sineTable,
+    sig_Buffer_fillWithHarmonics(table, fft, imaginary,
         &sig_STANDARD_WAVEFORMS[sig_StandardWaveform_SQUARE], 64,
         sig_HarmonicTaper_NONE);
     TEST_ASSERT_TRUE(maxSample(table->samples, length) > 1.15f);
 
     // Lanczos sigma factors reduce the overshoot to about 1.2%.
-    sig_Buffer_fillWithHarmonics(table, sineTable,
+    sig_Buffer_fillWithHarmonics(table, fft, imaginary,
         &sig_STANDARD_WAVEFORMS[sig_StandardWaveform_SQUARE], 64,
         sig_HarmonicTaper_LANCZOS);
     TEST_ASSERT_TRUE(maxSample(table->samples, length) < 1.03f);
 
     sig_Buffer_destroy(&allocator, table);
-    sig_Buffer_destroy(&allocator, sineTable);
+    allocator.impl->free(&allocator, imaginary);
+    sig_FFT_destroy(&allocator, fft);
 }
 
 // Measures the amplitude of one harmonic of a single-cycle table
@@ -781,7 +963,8 @@ double harmonicAmplitude(float* samples, size_t length, size_t harmonic) {
 void test_sig_Buffer_fillWithHarmonics_isBandlimited(void) {
     size_t length = 4096;
     size_t numHarmonics = 20;
-    struct sig_Buffer* sineTable = newSineTable(length);
+    struct sig_FFT* fft = sig_FFT_new(&allocator, length);
+    float_array_ptr imaginary = sig_samples_new(&allocator, length);
     struct sig_Buffer* table = sig_Buffer_new(&allocator, length);
     enum sig_HarmonicTaper tapers[2] = {
         sig_HarmonicTaper_NONE,
@@ -789,7 +972,7 @@ void test_sig_Buffer_fillWithHarmonics_isBandlimited(void) {
     };
 
     for (size_t i = 0; i < 2; i++) {
-        sig_Buffer_fillWithHarmonics(table, sineTable,
+        sig_Buffer_fillWithHarmonics(table, fft, imaginary,
             &sig_STANDARD_WAVEFORMS[sig_StandardWaveform_SAW], numHarmonics,
             tapers[i]);
 
@@ -808,7 +991,8 @@ void test_sig_Buffer_fillWithHarmonics_isBandlimited(void) {
     }
 
     sig_Buffer_destroy(&allocator, table);
-    sig_Buffer_destroy(&allocator, sineTable);
+    allocator.impl->free(&allocator, imaginary);
+    sig_FFT_destroy(&allocator, fft);
 }
 
 // Creates a bank whose tables each contain a single value,
@@ -1019,11 +1203,17 @@ void test_sig_AdditiveWavetableBank_tapersEachLevel(void) {
         untapered->levels[0]->waves[sig_StandardWaveform_SQUARE]->samples,
         tableLength) > 1.15f);
 
-    // Every tapered level limits it.
+    // Every tapered level limits it. A level with only a few harmonics
+    // is mostly its fundamental, which keeps its full gain, so it peaks
+    // at no more than the fundamental's amplitude, 4/pi.
     for (size_t level = 0; level < numLevels; level++) {
-        TEST_ASSERT_TRUE(maxSample(
+        float peak = maxSample(
             tapered->levels[level]->waves[sig_StandardWaveform_SQUARE]->samples,
-            tableLength) < 1.03f);
+            tableLength);
+        if (sig_AdditiveWavetableBank_numHarmonics(tapered, level) >= 20) {
+            TEST_ASSERT_TRUE(peak < 1.03f);
+        }
+        TEST_ASSERT_TRUE(peak <= 4.0f / sig_PI + 0.001f);
     }
 
     sig_AdditiveWavetableBank_destroy(&allocator, tapered);
@@ -2732,6 +2922,2898 @@ void test_sig_dsp_Ladder_outputs(void) {
         audioSettings->blockSize);
 }
 
+// The distance between two phases on the 0.0-1.0 phase circle.
+float phaseDistance(float a, float b) {
+    float difference = fabsf(a - b);
+    return difference > 0.5f ? 1.0f - difference : difference;
+}
+
+// Drives a ratio phasor with a reference phase ramp, and asserts that its
+// phase stays at numerator / denominator times the reference's accumulated
+// cycles, transposed by octaves.
+void testAssertRatioPhasorLocks(float numerator, float denominator,
+    float octaves, float frequency, size_t numSamples) {
+    float sampleRate = 48000.0f;
+    float reference = 0.0f;
+    double referenceCycles = 0.0;
+    double ratio = (double) numerator / (double) denominator *
+        pow(2.0, (double) octaves);
+    struct sig_osc_RatioPhasor phasor;
+    sig_osc_RatioPhasor_init(&phasor);
+
+    for (size_t i = 0; i < numSamples; i++) {
+        float phase = sig_osc_RatioPhasor_generate(&phasor, reference,
+            numerator, denominator, octaves);
+        double cycles = ratio * (referenceCycles + reference);
+        float expected = (float) (cycles - floor(cycles));
+        TEST_ASSERT_FLOAT_WITHIN(0.0001f, 0.0f,
+            phaseDistance(expected, phase));
+
+        float previous = reference;
+        sig_osc_Oscillator_accumulatePhase(&reference, frequency, sampleRate);
+        if (reference < previous) {
+            referenceCycles += 1.0;
+        }
+    }
+}
+
+void test_sig_osc_RatioPhasor_locksToWholeRatio(void) {
+    // With a whole number ratio, the phasor runs exactly three times
+    // as fast as the reference, starting together.
+    testAssertRatioPhasorLocks(3.0f, 1.0f, 0.0f, 100.0f, 48000);
+}
+
+void test_sig_osc_RatioPhasor_locksAcrossReferenceCycles(void) {
+    // With a fractional ratio, the phasor completes numerator cycles for
+    // every denominator cycles of the reference, aligning each time.
+    testAssertRatioPhasorLocks(2.0f, 3.0f, 0.0f, 100.0f, 48000);
+    testAssertRatioPhasorLocks(7.0f, 2.0f, 0.0f, 100.0f, 48000);
+    testAssertRatioPhasorLocks(1.0f, 11.0f, 0.0f, 100.0f, 48000);
+}
+
+void test_sig_osc_RatioPhasor_locksWhenTransposedByOctaves(void) {
+    // Transposing by whole octaves keeps the ratio a fraction of whole
+    // numbers, so the phasor stays locked to the reference: two thirds
+    // up an octave, three down two octaves, and one eleventh down an octave.
+    testAssertRatioPhasorLocks(2.0f, 3.0f, 1.0f, 100.0f, 48000);
+    testAssertRatioPhasorLocks(3.0f, 1.0f, -2.0f, 100.0f, 48000);
+    testAssertRatioPhasorLocks(1.0f, 11.0f, -1.0f, 100.0f, 48000);
+}
+
+void test_sig_osc_RatioPhasor_glidesAfterRatioChange(void) {
+    float sampleRate = 48000.0f;
+    float frequency = 100.0f;
+    float reference = 0.0f;
+    double referenceCycles = 0.0;
+    struct sig_osc_RatioPhasor phasor;
+    sig_osc_RatioPhasor_init(&phasor);
+    sig_osc_RatioPhasor_calculateCoefficient(&phasor, 0.05f, sampleRate);
+
+    // Run at 1:1, then switch to 2:1 a quarter of the way through
+    // a reference cycle.
+    float previousPhase = 0.0f;
+    size_t switchSample = 120;
+    size_t settledSample = switchSample + 24000;
+    for (size_t i = 0; i <= settledSample; i++) {
+        float numerator = i < switchSample ? 1.0f : 2.0f;
+        float phase = sig_osc_RatioPhasor_generate(&phasor, reference,
+            numerator, 1.0f, 0.0f);
+        double cycles = numerator * (referenceCycles + reference);
+        float locked = (float) (cycles - floor(cycles));
+
+        if (i == switchSample) {
+            // The phase stays continuous instead of jumping to the newly
+            // locked phase, which is a quarter cycle away.
+            TEST_ASSERT_TRUE(phaseDistance(previousPhase, phase) < 0.01f);
+            TEST_ASSERT_TRUE(phaseDistance(locked, phase) > 0.2f);
+        } else if (i == settledSample) {
+            // After ten glide times, the phase has settled at the newly
+            // locked phase.
+            TEST_ASSERT_FLOAT_WITHIN(0.001f, 0.0f,
+                phaseDistance(locked, phase));
+        }
+
+        previousPhase = phase;
+        float previous = reference;
+        sig_osc_Oscillator_accumulatePhase(&reference, frequency, sampleRate);
+        if (reference < previous) {
+            referenceCycles += 1.0;
+        }
+    }
+}
+
+void test_sig_osc_RatioPhasor_followsWithoutLocking(void) {
+    float sampleRate = 48000.0f;
+    float frequency = 100.0f;
+    float reference = 0.0f;
+    float previousReference = 0.0f;
+    float previousPhase = 0.0f;
+    struct sig_osc_RatioPhasor phasor;
+    sig_osc_RatioPhasor_init(&phasor);
+
+    // A ratio that is not a fraction of whole numbers advances the phase by
+    // the ratio times the reference's increment on every sample, including
+    // when the reference wraps.
+    for (size_t i = 0; i < 4800; i++) {
+        float phase = sig_osc_RatioPhasor_generate(&phasor, reference,
+            1.5f, 1.0f, 0.0f);
+        if (i > 0) {
+            float referenceStep = reference - previousReference;
+            referenceStep -= roundf(referenceStep);
+            float expected = sig_osc_Oscillator_wrapPhase(
+                previousPhase + 1.5f * referenceStep);
+            TEST_ASSERT_FLOAT_WITHIN(0.00001f, 0.0f,
+                phaseDistance(expected, phase));
+        }
+
+        previousPhase = phase;
+        previousReference = reference;
+        sig_osc_Oscillator_accumulatePhase(&reference, frequency, sampleRate);
+    }
+}
+
+void test_sig_osc_RatioPhasor_followsFractionalTransposition(void) {
+    float sampleRate = 48000.0f;
+    float frequency = 100.0f;
+    float octaves = 0.25f;
+    float transposedRatio = 3.0f / 2.0f * powf(2.0f, octaves);
+    float reference = 0.0f;
+    float previousReference = 0.0f;
+    float previousPhase = 0.0f;
+    struct sig_osc_RatioPhasor phasor;
+    sig_osc_RatioPhasor_init(&phasor);
+
+    // Transposing a whole ratio by part of an octave advances the phase by
+    // the transposed ratio times the reference's increment on every sample.
+    for (size_t i = 0; i < 4800; i++) {
+        float phase = sig_osc_RatioPhasor_generate(&phasor, reference,
+            3.0f, 2.0f, octaves);
+        if (i > 0) {
+            float referenceStep = reference - previousReference;
+            referenceStep -= roundf(referenceStep);
+            float expected = sig_osc_Oscillator_wrapPhase(
+                previousPhase + transposedRatio * referenceStep);
+            TEST_ASSERT_FLOAT_WITHIN(0.00001f, 0.0f,
+                phaseDistance(expected, phase));
+        }
+
+        previousPhase = phase;
+        previousReference = reference;
+        sig_osc_Oscillator_accumulatePhase(&reference, frequency, sampleRate);
+    }
+}
+
+void test_sig_osc_RatioPhasor_followsDenominatorBelowOne(void) {
+    float sampleRate = 48000.0f;
+    float reference = 0.0f;
+    float previousReference = 0.0f;
+    float previousPhase = 0.0f;
+    struct sig_osc_RatioPhasor phasor;
+    sig_osc_RatioPhasor_init(&phasor);
+
+    // A denominator between 0.0 and 1.0 is not a whole number, so the
+    // phasor follows the reference at the ratio, across many reference
+    // cycles, without locking.
+    for (size_t i = 0; i < 48000; i++) {
+        float phase = sig_osc_RatioPhasor_generate(&phasor, reference,
+            1.0f, 0.5f, 0.0f);
+        if (i > 0) {
+            float referenceStep = reference - previousReference;
+            referenceStep -= roundf(referenceStep);
+            float expected = sig_osc_Oscillator_wrapPhase(
+                previousPhase + 2.0f * referenceStep);
+            TEST_ASSERT_FLOAT_WITHIN(0.00001f, 0.0f,
+                phaseDistance(expected, phase));
+        }
+
+        previousPhase = phase;
+        previousReference = reference;
+        sig_osc_Oscillator_accumulatePhase(&reference, 100.0f, sampleRate);
+    }
+}
+
+void test_sig_osc_RatioPhasor_limitsFrequency(void) {
+    float sampleRate = 48000.0f;
+    float maxFrequency = 20000.0f;
+    float reference = 0.0f;
+    float previousPhase = 0.0f;
+    struct sig_osc_RatioPhasor phasor;
+    sig_osc_RatioPhasor_init(&phasor);
+    sig_osc_RatioPhasor_setMaxFrequency(&phasor, maxFrequency, sampleRate);
+
+    // A 100 Hz reference at a ratio of 523:1, transposed up five octaves,
+    // would run at about 1.7 MHz. Instead, the phasor runs at its maximum
+    // frequency.
+    for (size_t i = 0; i < 4800; i++) {
+        float phase = sig_osc_RatioPhasor_generate(&phasor, reference,
+            523.0f, 1.0f, 5.0f);
+        if (i > 0) {
+            float step = phase - previousPhase;
+            if (step < 0.0f) {
+                step += 1.0f;
+            }
+            TEST_ASSERT_FLOAT_WITHIN(0.00001f, maxFrequency / sampleRate,
+                step);
+        }
+
+        previousPhase = phase;
+        sig_osc_Oscillator_accumulatePhase(&reference, 100.0f, sampleRate);
+    }
+}
+
+void test_sig_osc_RatioPhasor_limitsToNyquistByDefault(void) {
+    float sampleRate = 48000.0f;
+    float reference = 0.0f;
+    float previousPhase = 0.0f;
+    struct sig_osc_RatioPhasor phasor;
+    sig_osc_RatioPhasor_init(&phasor);
+
+    // Without a maximum frequency, the phasor advances by at most half a
+    // cycle per sample.
+    for (size_t i = 0; i < 480; i++) {
+        float phase = sig_osc_RatioPhasor_generate(&phasor, reference,
+            523.0f, 1.0f, 5.0f);
+        if (i > 0) {
+            TEST_ASSERT_FLOAT_WITHIN(0.00001f, 0.5f,
+                phaseDistance(previousPhase, phase));
+        }
+
+        previousPhase = phase;
+        sig_osc_Oscillator_accumulatePhase(&reference, 100.0f, sampleRate);
+    }
+}
+
+void test_sig_osc_PeakFrequency_measuresPhaseRate(void) {
+    float sampleRate = 48000.0f;
+    float phase = 0.0f;
+    struct sig_osc_PeakFrequency peak;
+    sig_osc_PeakFrequency_init(&peak);
+    sig_osc_PeakFrequency_calculateCoefficient(&peak, 0.05f, sampleRate);
+
+    // A phase that ramps at a steady 1 kHz, wrapping on every cycle, has a
+    // peak frequency of 1 kHz.
+    for (size_t i = 0; i < 4800; i++) {
+        float frequency = sig_osc_PeakFrequency_generate(&peak, phase,
+            sampleRate);
+        if (i > 0) {
+            TEST_ASSERT_FLOAT_WITHIN(0.5f, 1000.0f, frequency);
+        }
+        sig_osc_Oscillator_accumulatePhase(&phase, 1000.0f, sampleRate);
+    }
+}
+
+void test_sig_osc_PeakFrequency_holdsAndReleasesPeak(void) {
+    float sampleRate = 48000.0f;
+    float release = 0.05f;
+    size_t releaseSamples = 2400;
+    float phase = 0.0f;
+    struct sig_osc_PeakFrequency peak;
+    sig_osc_PeakFrequency_init(&peak);
+    sig_osc_PeakFrequency_calculateCoefficient(&peak, release, sampleRate);
+
+    // When a 1 kHz phase slows to 100 Hz, the peak falls from 1 kHz with
+    // the release time constant until it reaches 100 Hz.
+    for (size_t i = 0; i < releaseSamples + 24000; i++) {
+        float frequency = i < releaseSamples ? 1000.0f : 100.0f;
+        float result = sig_osc_PeakFrequency_generate(&peak, phase,
+            sampleRate);
+        if (i == releaseSamples * 2) {
+            TEST_ASSERT_FLOAT_WITHIN(2.0f, 1000.0f * expf(-1.0f), result);
+        } else if (i == releaseSamples + 24000 - 1) {
+            TEST_ASSERT_FLOAT_WITHIN(0.5f, 100.0f, result);
+        }
+        sig_osc_Oscillator_accumulatePhase(&phase, frequency, sampleRate);
+    }
+}
+
+void test_sig_snapToInteger(void) {
+    // Values within the tolerance of a whole number snap to it exactly,
+    // on either side and for negative numbers.
+    TEST_ASSERT_EQUAL_FLOAT(0.0f, sig_snapToInteger(0.004f, 0.005f));
+    TEST_ASSERT_EQUAL_FLOAT(0.0f, sig_snapToInteger(-0.004f, 0.005f));
+    TEST_ASSERT_EQUAL_FLOAT(2.0f, sig_snapToInteger(1.996f, 0.005f));
+    TEST_ASSERT_EQUAL_FLOAT(-3.0f, sig_snapToInteger(-3.003f, 0.005f));
+
+    // Values farther from a whole number pass through unchanged.
+    TEST_ASSERT_EQUAL_FLOAT(0.006f, sig_snapToInteger(0.006f, 0.005f));
+    TEST_ASSERT_EQUAL_FLOAT(-1.5f, sig_snapToInteger(-1.5f, 0.005f));
+    TEST_ASSERT_EQUAL_FLOAT(2.25f, sig_snapToInteger(2.25f, 0.005f));
+}
+
+void test_sig_dsp_SnapToInteger(void) {
+    struct sig_dsp_SnapToInteger* snap = sig_dsp_SnapToInteger_new(
+        &allocator, context);
+    float_array_ptr source = sig_AudioBlock_new(&allocator, audioSettings);
+    snap->inputs.source = source;
+    snap->parameters.tolerance = 0.01f;
+
+    // Each sample within the tolerance of a whole number snaps to it,
+    // and the others pass through unchanged.
+    float values[4] = {0.995f, 1.5f, -2.008f, 0.02f};
+    float expected[4] = {1.0f, 1.5f, -2.0f, 0.02f};
+    for (size_t i = 0; i < audioSettings->blockSize; i++) {
+        FLOAT_ARRAY(source)[i] = values[i % 4];
+    }
+
+    snap->signal.generate(snap);
+
+    for (size_t i = 0; i < audioSettings->blockSize; i++) {
+        TEST_ASSERT_EQUAL_FLOAT(expected[i % 4],
+            FLOAT_ARRAY(snap->outputs.main)[i]);
+    }
+
+    sig_dsp_SnapToInteger_destroy(&allocator, snap);
+}
+
+void test_sig_dsp_Phasor(void) {
+    float frequency = 440.0f;
+    struct sig_dsp_Phasor* phasor = sig_dsp_Phasor_new(&allocator, context);
+    phasor->inputs.frequency = sig_AudioBlock_newWithValue(&allocator,
+        audioSettings, frequency);
+
+    // The phase ramps from 0.0 at the frequency, wrapping at 1.0,
+    // continuously across blocks.
+    for (size_t block = 0; block < 4; block++) {
+        phasor->signal.generate(phasor);
+        for (size_t i = 0; i < audioSettings->blockSize; i++) {
+            double cycles = (double) (block * audioSettings->blockSize + i) *
+                frequency / audioSettings->sampleRate;
+            float expected = (float) (cycles - floor(cycles));
+            TEST_ASSERT_FLOAT_WITHIN(0.0001f, 0.0f, phaseDistance(expected,
+                FLOAT_ARRAY(phasor->outputs.main)[i]));
+        }
+    }
+
+    sig_dsp_Phasor_destroy(&allocator, phasor);
+}
+
+void test_sig_dsp_RatioPhasor(void) {
+    float frequency = 100.0f;
+    struct sig_dsp_Phasor* reference = sig_dsp_Phasor_new(&allocator,
+        context);
+    reference->inputs.frequency = sig_AudioBlock_newWithValue(&allocator,
+        audioSettings, frequency);
+
+    struct sig_dsp_Value* numerator = sig_dsp_Value_new(&allocator, context);
+    numerator->parameters.value = 2.0f;
+    struct sig_dsp_RatioPhasor* phasor = sig_dsp_RatioPhasor_new(&allocator,
+        context);
+    phasor->inputs.reference = reference->outputs.main;
+    phasor->inputs.numerator = numerator->outputs.main;
+    phasor->inputs.denominator = sig_AudioBlock_newWithValue(&allocator,
+        audioSettings, 3.0f);
+    phasor->parameters.glide = 0.05f;
+
+    // The phasor stays locked at two thirds of the reference's accumulated
+    // cycles across blocks.
+    size_t numBlocks = 100;
+    double referenceCycles = 0.0;
+    float previousReference = 0.0f;
+    float previousPhase = 0.0f;
+    for (size_t block = 0; block < numBlocks * 2; block++) {
+        if (block == numBlocks) {
+            numerator->parameters.value = 5.0f;
+        }
+
+        reference->signal.generate(reference);
+        numerator->signal.generate(numerator);
+        phasor->signal.generate(phasor);
+
+        for (size_t i = 0; i < audioSettings->blockSize; i++) {
+            float referencePhase = FLOAT_ARRAY(reference->outputs.main)[i];
+            if (referencePhase < previousReference) {
+                referenceCycles += 1.0;
+            }
+            previousReference = referencePhase;
+
+            float phase = FLOAT_ARRAY(phasor->outputs.main)[i];
+            if (block < numBlocks) {
+                double cycles = 2.0 / 3.0 * (referenceCycles + referencePhase);
+                float expected = (float) (cycles - floor(cycles));
+                TEST_ASSERT_FLOAT_WITHIN(0.0001f, 0.0f,
+                    phaseDistance(expected, phase));
+            } else if (block == numBlocks && i == 0) {
+                // When the numerator changes, the glide keeps the phase
+                // continuous.
+                TEST_ASSERT_TRUE(phaseDistance(previousPhase, phase) < 0.01f);
+            }
+            previousPhase = phase;
+        }
+    }
+
+    sig_dsp_RatioPhasor_destroy(&allocator, phasor);
+    sig_dsp_Phasor_destroy(&allocator, reference);
+}
+
+void test_sig_dsp_RatioPhasor_transposesByOctaves(void) {
+    float frequency = 100.0f;
+    struct sig_dsp_Phasor* reference = sig_dsp_Phasor_new(&allocator,
+        context);
+    reference->inputs.frequency = sig_AudioBlock_newWithValue(&allocator,
+        audioSettings, frequency);
+
+    struct sig_dsp_RatioPhasor* phasor = sig_dsp_RatioPhasor_new(&allocator,
+        context);
+    phasor->inputs.reference = reference->outputs.main;
+    phasor->inputs.numerator = sig_AudioBlock_newWithValue(&allocator,
+        audioSettings, 2.0f);
+    phasor->inputs.denominator = sig_AudioBlock_newWithValue(&allocator,
+        audioSettings, 3.0f);
+    phasor->inputs.octaves = sig_AudioBlock_newWithValue(&allocator,
+        audioSettings, 1.0f);
+
+    // Two thirds transposed up an octave stays locked at four thirds of
+    // the reference's accumulated cycles.
+    double referenceCycles = 0.0;
+    float previousReference = 0.0f;
+    for (size_t block = 0; block < 100; block++) {
+        reference->signal.generate(reference);
+        phasor->signal.generate(phasor);
+
+        for (size_t i = 0; i < audioSettings->blockSize; i++) {
+            float referencePhase = FLOAT_ARRAY(reference->outputs.main)[i];
+            if (referencePhase < previousReference) {
+                referenceCycles += 1.0;
+            }
+            previousReference = referencePhase;
+
+            double cycles = 4.0 / 3.0 * (referenceCycles + referencePhase);
+            float expected = (float) (cycles - floor(cycles));
+            TEST_ASSERT_FLOAT_WITHIN(0.0001f, 0.0f, phaseDistance(expected,
+                FLOAT_ARRAY(phasor->outputs.main)[i]));
+        }
+    }
+
+    sig_dsp_RatioPhasor_destroy(&allocator, phasor);
+    sig_dsp_Phasor_destroy(&allocator, reference);
+}
+
+void test_sig_dsp_RatioPhasor_limitsFrequency(void) {
+    float maxFrequency = 10000.0f;
+    struct sig_dsp_Phasor* reference = sig_dsp_Phasor_new(&allocator,
+        context);
+    reference->inputs.frequency = sig_AudioBlock_newWithValue(&allocator,
+        audioSettings, 100.0f);
+
+    struct sig_dsp_RatioPhasor* phasor = sig_dsp_RatioPhasor_new(&allocator,
+        context);
+    phasor->inputs.reference = reference->outputs.main;
+    phasor->inputs.numerator = sig_AudioBlock_newWithValue(&allocator,
+        audioSettings, 523.0f);
+    phasor->inputs.octaves = sig_AudioBlock_newWithValue(&allocator,
+        audioSettings, 5.0f);
+    phasor->parameters.maxFrequency = maxFrequency;
+
+    // Instead of running at about 1.7 MHz, the phasor runs at its maximum
+    // frequency, across blocks.
+    float expectedStep = maxFrequency / audioSettings->sampleRate;
+    float previousPhase = 0.0f;
+    for (size_t block = 0; block < 4; block++) {
+        reference->signal.generate(reference);
+        phasor->signal.generate(phasor);
+
+        for (size_t i = 0; i < audioSettings->blockSize; i++) {
+            float phase = FLOAT_ARRAY(phasor->outputs.main)[i];
+            if (block > 0 || i > 0) {
+                float step = phase - previousPhase;
+                if (step < 0.0f) {
+                    step += 1.0f;
+                }
+                TEST_ASSERT_FLOAT_WITHIN(0.00001f, expectedStep, step);
+            }
+            previousPhase = phase;
+        }
+    }
+
+    sig_dsp_RatioPhasor_destroy(&allocator, phasor);
+    sig_dsp_Phasor_destroy(&allocator, reference);
+}
+
+void test_sig_dsp_WavetableReader(void) {
+    struct sig_Buffer* sineTable = newSineTable(4096);
+    struct sig_dsp_Phasor* phasor = sig_dsp_Phasor_new(&allocator, context);
+    phasor->inputs.frequency = sig_AudioBlock_newWithValue(&allocator,
+        audioSettings, 440.0f);
+
+    struct sig_dsp_WavetableReader* reader = sig_dsp_WavetableReader_new(
+        &allocator, context);
+    reader->wavetable = sineTable;
+    reader->inputs.phase = phasor->outputs.main;
+    reader->inputs.phaseOffset = sig_AudioBlock_newWithValue(&allocator,
+        audioSettings, 0.25f);
+    reader->inputs.mul = sig_AudioBlock_newWithValue(&allocator,
+        audioSettings, 0.5f);
+    reader->inputs.add = sig_AudioBlock_newWithValue(&allocator,
+        audioSettings, 0.1f);
+
+    // The reader reads the table at the phase plus the phase offset,
+    // then applies the gain and offset.
+    for (size_t block = 0; block < 4; block++) {
+        phasor->signal.generate(phasor);
+        reader->signal.generate(reader);
+        for (size_t i = 0; i < audioSettings->blockSize; i++) {
+            float phase = FLOAT_ARRAY(phasor->outputs.main)[i];
+            float expected = 0.5f * sinf(sig_TWOPI * (phase + 0.25f)) + 0.1f;
+            TEST_ASSERT_FLOAT_WITHIN(0.001f, expected,
+                FLOAT_ARRAY(reader->outputs.main)[i]);
+        }
+    }
+
+    sig_dsp_WavetableReader_destroy(&allocator, reader);
+    sig_dsp_Phasor_destroy(&allocator, phasor);
+    sig_Buffer_destroy(&allocator, sineTable);
+}
+
+void test_sig_dsp_AdditiveWavetableBankReader(void) {
+    struct sig_AdditiveWavetableBank* bank = newStandardWavetableBank(10,
+        2048, 20.0f, 20000.0f, sig_HarmonicTaper_NONE);
+    float sawIndex = sig_osc_WavetableBank_tableIndex(
+        sig_StandardWaveform_SAW, sig_StandardWaveform_COUNT);
+    struct sig_dsp_Phasor* phasor = sig_dsp_Phasor_new(&allocator, context);
+    phasor->inputs.frequency = sig_AudioBlock_newWithValue(&allocator,
+        audioSettings, 100.0f);
+
+    struct sig_dsp_Value* frequency = sig_dsp_Value_new(&allocator, context);
+    struct sig_dsp_AdditiveWavetableBankReader* reader =
+        sig_dsp_AdditiveWavetableBankReader_new(&allocator, context);
+    reader->wavetables = bank;
+    reader->inputs.phase = phasor->outputs.main;
+    reader->inputs.frequency = frequency->outputs.main;
+    reader->inputs.tableIndex = sig_AudioBlock_newWithValue(&allocator,
+        audioSettings, sawIndex);
+
+    // The reader reads the waveform at the phase input, from the octave
+    // that its frequency input selects, independently of the phase's rate.
+    float frequencies[2] = {100.0f, 5000.0f};
+    for (size_t f = 0; f < 2; f++) {
+        frequency->parameters.value = frequencies[f];
+        float level = sig_AdditiveWavetableBank_levelForFrequency(bank,
+            frequencies[f]);
+        for (size_t block = 0; block < 4; block++) {
+            phasor->signal.generate(phasor);
+            frequency->signal.generate(frequency);
+            reader->signal.generate(reader);
+            for (size_t i = 0; i < audioSettings->blockSize; i++) {
+                float phase = FLOAT_ARRAY(phasor->outputs.main)[i];
+                float expected = sig_AdditiveWavetableBank_readLinearAtPhase(
+                    bank, level, (float) sig_StandardWaveform_SAW, phase);
+                TEST_ASSERT_FLOAT_WITHIN(0.0001f, expected,
+                    FLOAT_ARRAY(reader->outputs.main)[i]);
+            }
+        }
+    }
+
+    sig_dsp_AdditiveWavetableBankReader_destroy(&allocator, reader);
+    sig_dsp_Phasor_destroy(&allocator, phasor);
+    sig_AdditiveWavetableBank_destroy(&allocator, bank);
+}
+
+// Measures the mean output of a carrier whose phase is modulated by a sine
+// modulator, both driven by one phasor. The ratio starts at 2:1 and
+// switches to 1:1 a quarter of the way through a carrier cycle, when the
+// two phases are misaligned, and the mean is measured once the glide has
+// settled.
+float meanOfPhaseLockedModulation(struct sig_AdditiveWavetableBank* bank,
+    struct sig_Buffer* sineTable, float tableIndex, float index) {
+    float frequency = 50.0f;
+    struct sig_dsp_Phasor* phasor = sig_dsp_Phasor_new(&allocator, context);
+    phasor->inputs.frequency = sig_AudioBlock_newWithValue(&allocator,
+        audioSettings, frequency);
+
+    struct sig_dsp_Value* numerator = sig_dsp_Value_new(&allocator, context);
+    numerator->parameters.value = 2.0f;
+    struct sig_dsp_RatioPhasor* ratio = sig_dsp_RatioPhasor_new(&allocator,
+        context);
+    ratio->inputs.reference = phasor->outputs.main;
+    ratio->inputs.numerator = numerator->outputs.main;
+    ratio->parameters.glide = 0.05f;
+
+    struct sig_dsp_WavetableReader* modulator = sig_dsp_WavetableReader_new(
+        &allocator, context);
+    modulator->wavetable = sineTable;
+    modulator->inputs.phase = ratio->outputs.main;
+    modulator->inputs.mul = sig_AudioBlock_newWithValue(&allocator,
+        audioSettings, index);
+
+    struct sig_dsp_AdditiveWavetableBankReader* carrier =
+        sig_dsp_AdditiveWavetableBankReader_new(&allocator, context);
+    carrier->wavetables = bank;
+    carrier->inputs.phase = phasor->outputs.main;
+    carrier->inputs.phaseOffset = modulator->outputs.main;
+    carrier->inputs.frequency = sig_AudioBlock_newWithValue(&allocator,
+        audioSettings, frequency);
+    carrier->inputs.tableIndex = sig_AudioBlock_newWithValue(&allocator,
+        audioSettings, tableIndex);
+
+    size_t blocksPerSecond = (size_t) (audioSettings->sampleRate /
+        (float) audioSettings->blockSize);
+    size_t blocksPerQuarterCycle = (size_t) (audioSettings->sampleRate /
+        (4.0f * frequency * (float) audioSettings->blockSize));
+    size_t switchBlock = blocksPerSecond / 2 + blocksPerQuarterCycle;
+    double sum = 0.0;
+    size_t numSamples = 0;
+    for (size_t block = 0; block < blocksPerSecond * 2; block++) {
+        if (block == switchBlock) {
+            numerator->parameters.value = 1.0f;
+        }
+
+        phasor->signal.generate(phasor);
+        numerator->signal.generate(numerator);
+        ratio->signal.generate(ratio);
+        modulator->signal.generate(modulator);
+        carrier->signal.generate(carrier);
+
+        if (block >= blocksPerSecond) {
+            for (size_t i = 0; i < audioSettings->blockSize; i++) {
+                sum += FLOAT_ARRAY(carrier->outputs.main)[i];
+                numSamples++;
+            }
+        }
+    }
+
+    sig_dsp_AdditiveWavetableBankReader_destroy(&allocator, carrier);
+    sig_dsp_WavetableReader_destroy(&allocator, modulator);
+    sig_dsp_RatioPhasor_destroy(&allocator, ratio);
+    sig_dsp_Phasor_destroy(&allocator, phasor);
+
+    return (float) (sum / (double) numSamples);
+}
+
+void test_sig_dsp_AdditiveWavetableBankReader_selectsLevelFromPeak(void) {
+    struct sig_AdditiveWavetableBank* bank = newStandardWavetableBank(10,
+        2048, 20.0f, 20000.0f, sig_HarmonicTaper_NONE);
+    float sawIndex = sig_osc_WavetableBank_tableIndex(
+        sig_StandardWaveform_SAW, sig_StandardWaveform_COUNT);
+    float phaseFrequency = 5000.0f;
+    struct sig_dsp_Phasor* phasor = sig_dsp_Phasor_new(&allocator, context);
+    phasor->inputs.frequency = sig_AudioBlock_newWithValue(&allocator,
+        audioSettings, phaseFrequency);
+
+    struct sig_dsp_AdditiveWavetableBankReader* reader =
+        sig_dsp_AdditiveWavetableBankReader_new(&allocator, context);
+    reader->wavetables = bank;
+    reader->inputs.phase = phasor->outputs.main;
+    reader->inputs.frequency = sig_AudioBlock_newWithValue(&allocator,
+        audioSettings, 100.0f);
+    reader->inputs.tableIndex = sig_AudioBlock_newWithValue(&allocator,
+        audioSettings, sawIndex);
+    reader->parameters.peakRelease = 0.05f;
+
+    // With a peak release time, the reader ignores its frequency input, and
+    // selects the level for the rate at which its phase actually advances.
+    float level = sig_AdditiveWavetableBank_levelForFrequency(bank,
+        phaseFrequency);
+    for (size_t block = 0; block < 4; block++) {
+        phasor->signal.generate(phasor);
+        reader->signal.generate(reader);
+        // The first sample has no previous phase to measure from.
+        for (size_t i = block == 0 ? 1 : 0; i < audioSettings->blockSize;
+            i++) {
+            float phase = FLOAT_ARRAY(phasor->outputs.main)[i];
+            float expected = sig_AdditiveWavetableBank_readLinearAtPhase(
+                bank, level, (float) sig_StandardWaveform_SAW, phase);
+            TEST_ASSERT_FLOAT_WITHIN(0.001f, expected,
+                FLOAT_ARRAY(reader->outputs.main)[i]);
+        }
+    }
+
+    sig_dsp_AdditiveWavetableBankReader_destroy(&allocator, reader);
+    sig_dsp_Phasor_destroy(&allocator, phasor);
+    sig_AdditiveWavetableBank_destroy(&allocator, bank);
+}
+
+void test_sig_dsp_RatioPhasor_phaseModulationHasNoDC(void) {
+    struct sig_AdditiveWavetableBank* bank = newStandardWavetableBank(10,
+        2048, 20.0f, 2000.0f, sig_HarmonicTaper_LANCZOS);
+    struct sig_Buffer* sineTable = newSineTable(2048);
+    float shapes[2] = {
+        sig_osc_WavetableBank_tableIndex(sig_StandardWaveform_SINE,
+            sig_StandardWaveform_COUNT),
+        sig_osc_WavetableBank_tableIndex(sig_StandardWaveform_SQUARE,
+            sig_StandardWaveform_COUNT)
+    };
+    float indices[2] = {0.3f, 0.45f};
+
+    // At a 1:1 ratio, phase modulation with independently running
+    // oscillators produces DC of up to about 0.6 for a sine carrier and 0.7
+    // for a square, depending on their relative phase. With the modulator
+    // locked to the carrier's phase, the output has no DC.
+    for (size_t shape = 0; shape < 2; shape++) {
+        for (size_t i = 0; i < 2; i++) {
+            float mean = meanOfPhaseLockedModulation(bank, sineTable,
+                shapes[shape], indices[i]);
+            TEST_ASSERT_FLOAT_WITHIN(0.01f, 0.0f, mean);
+        }
+    }
+
+    sig_Buffer_destroy(&allocator, sineTable);
+    sig_AdditiveWavetableBank_destroy(&allocator, bank);
+}
+
+void test_sig_dsp_WavetableBankReader(void) {
+    size_t tableLength = 2048;
+    struct sig_WavetableBank* bank = sig_WavetableBank_new(&allocator, 2,
+        tableLength);
+    sig_Buffer_fillWithWaveform(bank->waves[0], sig_waveform_sine,
+        tableLength, 0.0f, 1.0f);
+    sig_Buffer_fillWithWaveform(bank->waves[1], sig_waveform_triangle,
+        tableLength, 0.0f, 1.0f);
+
+    struct sig_dsp_Phasor* phasor = sig_dsp_Phasor_new(&allocator, context);
+    phasor->inputs.frequency = sig_AudioBlock_newWithValue(&allocator,
+        audioSettings, 440.0f);
+
+    struct sig_dsp_WavetableBankReader* reader =
+        sig_dsp_WavetableBankReader_new(&allocator, context);
+    reader->wavetables = bank;
+    reader->inputs.phase = phasor->outputs.main;
+    reader->inputs.phaseOffset = sig_AudioBlock_newWithValue(&allocator,
+        audioSettings, 0.25f);
+    reader->inputs.tableIndex = sig_AudioBlock_newWithValue(&allocator,
+        audioSettings, 0.25f);
+    reader->inputs.mul = sig_AudioBlock_newWithValue(&allocator,
+        audioSettings, 0.5f);
+    reader->inputs.add = sig_AudioBlock_newWithValue(&allocator,
+        audioSettings, 0.1f);
+
+    // The reader reads the bank at the phase plus the phase offset. A table
+    // index of 0.25 cycles of a two-table bank crossfades halfway between
+    // the sine and the triangle.
+    for (size_t block = 0; block < 4; block++) {
+        phasor->signal.generate(phasor);
+        reader->signal.generate(reader);
+        for (size_t i = 0; i < audioSettings->blockSize; i++) {
+            float phase = FLOAT_ARRAY(phasor->outputs.main)[i] + 0.25f;
+            phase -= floorf(phase);
+            float radians = sig_TWOPI * phase;
+            float mixed = 0.5f * sig_waveform_sine(radians) +
+                0.5f * sig_waveform_triangle(radians);
+            TEST_ASSERT_FLOAT_WITHIN(0.001f, 0.5f * mixed + 0.1f,
+                FLOAT_ARRAY(reader->outputs.main)[i]);
+        }
+    }
+
+    sig_dsp_WavetableBankReader_destroy(&allocator, reader);
+    sig_dsp_Phasor_destroy(&allocator, phasor);
+    sig_WavetableBank_destroy(&allocator, bank);
+}
+
+#define CLOCK_PULSE_WIDTH 5
+
+// Returns the value of a pulse train at a sample, with a pulse that
+// starts at each sample listed in pulseStarts.
+float clockPulse(size_t sample, const size_t* pulseStarts,
+    size_t numPulses) {
+    for (size_t i = 0; i < numPulses; i++) {
+        if (sample >= pulseStarts[i] &&
+            sample < pulseStarts[i] + CLOCK_PULSE_WIDTH) {
+            return 1.0f;
+        }
+    }
+
+    return 0.0f;
+}
+
+void test_sig_osc_ClockPhasor_followsPulses(void) {
+    struct sig_osc_ClockPhasor phasor;
+    sig_osc_ClockPhasor_init(&phasor);
+    size_t period = 100;
+
+    // The phasor waits for a second pulse to measure the clock's period.
+    // From then on, it completes one cycle per period, wrapping at each
+    // pulse.
+    for (size_t n = 0; n < period * 10; n++) {
+        float pulse = n % period < CLOCK_PULSE_WIDTH ? 1.0f : 0.0f;
+        float phase = sig_osc_ClockPhasor_generate(&phasor, pulse, 0.5f);
+        float expected = n < period ? 0.0f :
+            (float) ((n - period) % period) / (float) period;
+        TEST_ASSERT_FLOAT_WITHIN(0.0001f, 0.0f,
+            phaseDistance(expected, phase));
+    }
+}
+
+void test_sig_osc_ClockPhasor_spreadsCorrection(void) {
+    struct sig_osc_ClockPhasor phasor;
+    sig_osc_ClockPhasor_init(&phasor);
+
+    // The clock speeds up from a period of 100 samples to 80.
+    size_t pulseStarts[9] = {0, 100, 200, 300, 400, 480, 560, 640, 720};
+    float previousPhase = 0.0f;
+
+    for (size_t n = 0; n < 800; n++) {
+        float phase = sig_osc_ClockPhasor_generate(&phasor,
+            clockPulse(n, pulseStarts, 9), 0.5f);
+
+        if (n == 480) {
+            // The early pulse arrives 0.2 cycles ahead of the phasor.
+            TEST_ASSERT_FLOAT_WITHIN(0.0001f, 0.0f,
+                phaseDistance(0.8f, phase));
+        }
+
+        // Rather than jumping, the phasor spreads its correction over the
+        // next period, advancing 1.2 cycles in 80 samples.
+        TEST_ASSERT_TRUE(phaseDistance(previousPhase, phase) <=
+            1.2f / 80.0f + 0.0001f);
+
+        // From the next pulse, the phasor is aligned with the clock again.
+        if (n >= 560) {
+            float expected = (float) ((n - 560) % 80) / 80.0f;
+            TEST_ASSERT_FLOAT_WITHIN(0.0001f, 0.0f,
+                phaseDistance(expected, phase));
+        }
+
+        previousPhase = phase;
+    }
+}
+
+void test_sig_osc_ClockPhasor_slowsWithoutJumping(void) {
+    struct sig_osc_ClockPhasor phasor;
+    sig_osc_ClockPhasor_init(&phasor);
+
+    // The clock slows down from a period of 100 samples to 120.
+    size_t pulseStarts[8] = {0, 100, 200, 300, 400, 520, 640, 760};
+    float previousPhase = 0.0f;
+
+    for (size_t n = 0; n < 880; n++) {
+        float phase = sig_osc_ClockPhasor_generate(&phasor,
+            clockPulse(n, pulseStarts, 8), 0.5f);
+
+        if (n == 520) {
+            // The late pulse arrives 0.2 cycles after the phasor wrapped.
+            TEST_ASSERT_FLOAT_WITHIN(0.0001f, 0.0f,
+                phaseDistance(0.2f, phase));
+        }
+
+        // The phasor never moves backwards. It slows down instead,
+        // advancing 0.8 cycles in the next 120 samples.
+        float step = phase - previousPhase;
+        if (step < 0.0f) {
+            step += 1.0f;
+        }
+        TEST_ASSERT_TRUE(step <= 0.01f + 0.0001f);
+
+        if (n >= 640) {
+            float expected = (float) ((n - 640) % 120) / 120.0f;
+            TEST_ASSERT_FLOAT_WITHIN(0.0001f, 0.0f,
+                phaseDistance(expected, phase));
+        }
+
+        previousPhase = phase;
+    }
+}
+
+void test_sig_osc_ClockPhasor_keepsFrequencyWhenPulsesStop(void) {
+    struct sig_osc_ClockPhasor phasor;
+    sig_osc_ClockPhasor_init(&phasor);
+
+    // The pulses stop after the sixth.
+    size_t pulseStarts[6] = {0, 100, 200, 300, 400, 500};
+
+    // The phasor continues at the clock's last frequency.
+    for (size_t n = 0; n < 2000; n++) {
+        float phase = sig_osc_ClockPhasor_generate(&phasor,
+            clockPulse(n, pulseStarts, 6), 0.5f);
+        if (n >= 100) {
+            float expected = (float) ((n - 100) % 100) / 100.0f;
+            TEST_ASSERT_FLOAT_WITHIN(0.0001f, 0.0f,
+                phaseDistance(expected, phase));
+        }
+    }
+}
+
+// The window and hop lengths that sig_dsp_TempoDetector uses at 48 kHz.
+#define TEST_TEMPO_WINDOW_LENGTH 2048
+#define TEST_TEMPO_HOP_LENGTH 557
+#define TEST_TEMPO_THRESHOLD -70.0f
+
+// Generates one sample of a tone whose partials have amplitudes
+// 0.5 / h. Every partial follows the fundamental's vibrato, as the
+// partials of an acoustic instrument do. phases contains one phase per
+// partial.
+static float testTempo_harmonicTone(double time, float sampleRate,
+    float fundamental, size_t numHarmonics, float vibratoDepth,
+    float vibratoRate, double* phases) {
+    float modulation = 1.0f + vibratoDepth *
+        sinf(sig_TWOPI * vibratoRate * (float) time);
+    float sample = 0.0f;
+    for (size_t h = 0; h < numHarmonics; h++) {
+        phases[h] += 2.0 * 3.141592653589793 * (double) fundamental *
+            (double) (h + 1) * (double) modulation / (double) sampleRate;
+        if (phases[h] > 2.0 * 3.141592653589793) {
+            phases[h] -= 2.0 * 3.141592653589793;
+        }
+        sample += (0.5f / (float) (h + 1)) * sinf((float) phases[h]);
+    }
+
+    return sample;
+}
+
+// Returns the amplitude envelope of a plucked note at the given time
+// after its onset: a 2 ms attack and an exponential decay.
+static float testTempo_pluckEnvelope(double time, float decay) {
+    float attack = (float) (time / 0.002);
+    if (attack > 1.0f) {
+        attack = 1.0f;
+    }
+
+    return attack * expf((float) -time / decay);
+}
+
+static void testTempo_clearPhases(double* phases, size_t numPhases) {
+    for (size_t i = 0; i < numPhases; i++) {
+        phases[i] = 0.0;
+    }
+}
+
+// Runs a plucked note at 220 Hz over a sustained tone at 330 Hz through
+// a detector, and reports the envelope's peak after the onset and the
+// time from the onset to the first sample that reports the peak.
+static void testTempo_measurePluckOverTone(float sampleRate,
+    size_t windowLength, size_t hopLength, float* peak, float* latency) {
+    struct sig_tempo_OnsetDetector* detector =
+        sig_tempo_OnsetDetector_new(&allocator, sampleRate, windowLength,
+            hopLength, 2, TEST_TEMPO_THRESHOLD);
+    double tonePhases[6];
+    double pluckPhases[6];
+    testTempo_clearPhases(tonePhases, 6);
+    testTempo_clearPhases(pluckPhases, 6);
+
+    size_t onset = (size_t) (sampleRate * 1.0f);
+    size_t numSamples = onset + (size_t) (sampleRate * 0.15f);
+    *peak = 0.0f;
+    size_t peakTime = onset;
+    for (size_t i = 0; i < numSamples; i++) {
+        float sample = 0.6f * testTempo_harmonicTone((double) i / sampleRate,
+            sampleRate, 330.0f, 6, 0.0f, 0.0f, tonePhases);
+        if (i >= onset) {
+            double time = (double) (i - onset) / sampleRate;
+            sample += testTempo_pluckEnvelope(time, 0.3f) *
+                testTempo_harmonicTone(time, sampleRate, 220.0f, 6, 0.0f,
+                    0.0f, pluckPhases);
+        }
+
+        float envelope = sig_tempo_OnsetDetector_generate(detector, sample);
+        if (i >= onset && envelope > *peak) {
+            *peak = envelope;
+            peakTime = i;
+        }
+    }
+
+    *latency = (float) (peakTime - onset) / sampleRate;
+    sig_tempo_OnsetDetector_destroy(&allocator, detector);
+}
+
+// Runs a tone with vibrato of plus or minus 3 percent at 5.5 Hz through
+// a detector, and returns the envelope's peak after the tone's own
+// onset has passed.
+static float testTempo_measureVibrato(float fundamental,
+    size_t numHarmonics) {
+    float sampleRate = audioSettings->sampleRate;
+    struct sig_tempo_OnsetDetector* detector =
+        sig_tempo_OnsetDetector_new(&allocator, sampleRate,
+            TEST_TEMPO_WINDOW_LENGTH, TEST_TEMPO_HOP_LENGTH, 2,
+            TEST_TEMPO_THRESHOLD);
+    double phases[12];
+    testTempo_clearPhases(phases, 12);
+
+    size_t settle = (size_t) (sampleRate * 0.5f);
+    size_t numSamples = (size_t) (sampleRate * 2.0f);
+    float peak = 0.0f;
+    for (size_t i = 0; i < numSamples; i++) {
+        float sample = 0.5f * testTempo_harmonicTone((double) i / sampleRate,
+            sampleRate, fundamental, numHarmonics, 0.03f, 5.5f, phases);
+        float envelope = sig_tempo_OnsetDetector_generate(detector, sample);
+        if (i >= settle && envelope > peak) {
+            peak = envelope;
+        }
+    }
+
+    sig_tempo_OnsetDetector_destroy(&allocator, detector);
+
+    return peak;
+}
+
+// Runs white noise with the given peak amplitude through a detector,
+// with plucked notes at -40 dBFS every half second from plucksStart
+// seconds onward. Reports the envelope's peak before and after the
+// first pluck.
+static void testTempo_measurePlucksInNoise(float noiseAmplitude,
+    float plucksStart, float threshold, float* noisePeak,
+    float* pluckPeak) {
+    float sampleRate = audioSettings->sampleRate;
+    struct sig_tempo_OnsetDetector* detector =
+        sig_tempo_OnsetDetector_new(&allocator, sampleRate,
+            TEST_TEMPO_WINDOW_LENGTH, TEST_TEMPO_HOP_LENGTH, 2, threshold);
+    struct sig_Random* random = sig_Random_new(&allocator, 5);
+    double phases[6];
+    testTempo_clearPhases(phases, 6);
+
+    size_t firstPluck = (size_t) (sampleRate * plucksStart);
+    size_t pluckInterval = (size_t) (sampleRate * 0.5f);
+    size_t numSamples = firstPluck + 3 * pluckInterval;
+    *noisePeak = 0.0f;
+    *pluckPeak = 0.0f;
+    for (size_t i = 0; i < numSamples; i++) {
+        float sample = noiseAmplitude *
+            (2.0f * sig_Random_nextFloat(random) - 1.0f);
+        if (i >= firstPluck) {
+            size_t position = (i - firstPluck) % pluckInterval;
+            if (position == 0) {
+                testTempo_clearPhases(phases, 6);
+            }
+            double time = (double) position / sampleRate;
+            sample += 0.01f * testTempo_pluckEnvelope(time, 0.15f) *
+                testTempo_harmonicTone(time, sampleRate, 330.0f, 6, 0.0f,
+                    0.0f, phases);
+        }
+
+        float envelope = sig_tempo_OnsetDetector_generate(detector, sample);
+        if (i < firstPluck && envelope > *noisePeak) {
+            *noisePeak = envelope;
+        }
+        if (i >= firstPluck && envelope > *pluckPeak) {
+            *pluckPeak = envelope;
+        }
+    }
+
+    sig_Random_destroy(&allocator, random);
+    sig_tempo_OnsetDetector_destroy(&allocator, detector);
+}
+
+// Runs a train of single-sample clicks at 120 BPM through a detector,
+// and returns the smallest of the envelope's peaks after each click.
+static float testTempo_measureClickPeaks(float sampleRate,
+    size_t windowLength, size_t hopLength) {
+    struct sig_tempo_OnsetDetector* detector =
+        sig_tempo_OnsetDetector_new(&allocator, sampleRate, windowLength,
+            hopLength, 2, TEST_TEMPO_THRESHOLD);
+    size_t clickInterval = (size_t) (sampleRate * 0.5f);
+    size_t numClicks = 4;
+    float smallestPeak = 1.0f;
+    float peak = 0.0f;
+    for (size_t i = 0; i < numClicks * clickInterval; i++) {
+        if (i % clickInterval == 0) {
+            if (i > 0 && peak < smallestPeak) {
+                smallestPeak = peak;
+            }
+            peak = 0.0f;
+        }
+        float sample = i % clickInterval == clickInterval / 2 ? 1.0f : 0.0f;
+        float envelope = sig_tempo_OnsetDetector_generate(detector, sample);
+        if (envelope > peak) {
+            peak = envelope;
+        }
+    }
+    if (peak < smallestPeak) {
+        smallestPeak = peak;
+    }
+
+    sig_tempo_OnsetDetector_destroy(&allocator, detector);
+
+    return smallestPeak;
+}
+
+void test_sig_tempo_OnsetDetector_silence(void) {
+    struct sig_tempo_OnsetDetector* detector =
+        sig_tempo_OnsetDetector_new(&allocator, audioSettings->sampleRate,
+            TEST_TEMPO_WINDOW_LENGTH, TEST_TEMPO_HOP_LENGTH, 2,
+            TEST_TEMPO_THRESHOLD);
+
+    // One second of silence produces no onset strength.
+    size_t numSamples = (size_t) audioSettings->sampleRate;
+    for (size_t i = 0; i < numSamples; i++) {
+        float envelope = sig_tempo_OnsetDetector_generate(detector, 0.0f);
+        TEST_ASSERT_EQUAL_FLOAT(0.0f, envelope);
+    }
+
+    sig_tempo_OnsetDetector_destroy(&allocator, detector);
+}
+
+void test_sig_tempo_OnsetDetector_detectsOnsets(void) {
+    float sampleRate = audioSettings->sampleRate;
+    struct sig_tempo_OnsetDetector* detector =
+        sig_tempo_OnsetDetector_new(&allocator, sampleRate,
+            TEST_TEMPO_WINDOW_LENGTH, TEST_TEMPO_HOP_LENGTH, 2,
+            TEST_TEMPO_THRESHOLD);
+
+    size_t numSamples = (size_t) (sampleRate * 2.0f);
+    float_array_ptr envelope = sig_samples_new(&allocator, numSamples);
+
+    // Clicks every half second, a 120 BPM beat.
+    size_t firstClick = (size_t) (sampleRate * 0.25f);
+    size_t clickInterval = (size_t) (sampleRate * 0.5f);
+    for (size_t i = 0; i < numSamples; i++) {
+        float sample = (i >= firstClick &&
+            (i - firstClick) % clickInterval == 0) ? 1.0f : 0.0f;
+        FLOAT_ARRAY(envelope)[i] =
+            sig_tempo_OnsetDetector_generate(detector, sample);
+    }
+
+    for (size_t i = 0; i < firstClick; i++) {
+        TEST_ASSERT_EQUAL_FLOAT(0.0f, FLOAT_ARRAY(envelope)[i]);
+    }
+
+    // The click leaves the frame after one window, and the frame it
+    // is compared with two hops later.
+    size_t settleTime = TEST_TEMPO_WINDOW_LENGTH +
+        3 * TEST_TEMPO_HOP_LENGTH;
+    for (size_t click = firstClick; click < numSamples;
+        click += clickInterval) {
+        // Each click raises the envelope close to its largest value,
+        // ln 2...
+        float peak = 0.0f;
+        for (size_t i = click; i < click + settleTime; i++) {
+            float value = FLOAT_ARRAY(envelope)[i];
+            TEST_ASSERT_TRUE(value <= sig_LOG2);
+            if (value > peak) {
+                peak = value;
+            }
+        }
+        TEST_ASSERT_TRUE(peak > 0.5f);
+
+        // ...and the envelope settles back to zero before the next
+        // click.
+        size_t settleEnd = click + clickInterval;
+        if (settleEnd > numSamples) {
+            settleEnd = numSamples;
+        }
+        for (size_t i = click + settleTime; i < settleEnd; i++) {
+            TEST_ASSERT_EQUAL_FLOAT(0.0f, FLOAT_ARRAY(envelope)[i]);
+        }
+    }
+
+    allocator.impl->free(&allocator, envelope);
+    sig_tempo_OnsetDetector_destroy(&allocator, detector);
+}
+
+void test_sig_tempo_OnsetDetector_ignoresVibrato(void) {
+    float pluckPeak;
+    float latency;
+    testTempo_measurePluckOverTone(audioSettings->sampleRate,
+        TEST_TEMPO_WINDOW_LENGTH, TEST_TEMPO_HOP_LENGTH, &pluckPeak,
+        &latency);
+    float vibratoPeak = testTempo_measureVibrato(220.0f, 4);
+
+    TEST_ASSERT_TRUE(pluckPeak > 0.05f);
+    TEST_ASSERT_TRUE(vibratoPeak <= pluckPeak / 10.0f);
+}
+
+void test_sig_tempo_OnsetDetector_ignoresVibratoOnRichTone(void) {
+    float pluckPeak;
+    float latency;
+    testTempo_measurePluckOverTone(audioSettings->sampleRate,
+        TEST_TEMPO_WINDOW_LENGTH, TEST_TEMPO_HOP_LENGTH, &pluckPeak,
+        &latency);
+    float vibratoPeak = testTempo_measureVibrato(440.0f, 12);
+
+    TEST_ASSERT_TRUE(pluckPeak > 0.05f);
+    TEST_ASSERT_TRUE(vibratoPeak <= pluckPeak / 10.0f);
+}
+
+void test_sig_tempo_OnsetDetector_whitensDynamics(void) {
+    float sampleRate = audioSettings->sampleRate;
+    struct sig_tempo_OnsetDetector* detector =
+        sig_tempo_OnsetDetector_new(&allocator, sampleRate,
+            TEST_TEMPO_WINDOW_LENGTH, TEST_TEMPO_HOP_LENGTH, 2,
+            TEST_TEMPO_THRESHOLD);
+    double phases[6];
+
+    // Loud plucks, then plucks 26 dB quieter, both at 120 BPM.
+    float loudAmplitude = 1.0f;
+    float quietAmplitude = 0.05f;
+    size_t pluckInterval = (size_t) (sampleRate * 0.5f);
+    size_t numLoud = 3 * pluckInterval;
+    size_t numQuiet = 5 * pluckInterval;
+    size_t numSamples = numLoud + numQuiet;
+
+    float loudPeak = 0.0f;
+    float quietPeak = 0.0f;
+    size_t quietMeasureStart = numSamples - 2 * pluckInterval;
+
+    for (size_t i = 0; i < numSamples; i++) {
+        size_t position = i % pluckInterval;
+        if (position == 0) {
+            testTempo_clearPhases(phases, 6);
+        }
+        float amplitude = i < numLoud ? loudAmplitude : quietAmplitude;
+        double time = (double) position / sampleRate;
+        float sample = amplitude * testTempo_pluckEnvelope(time, 0.15f) *
+            testTempo_harmonicTone(time, sampleRate, 330.0f, 6, 0.0f, 0.0f,
+                phases);
+        float envelope = sig_tempo_OnsetDetector_generate(detector, sample);
+        if (i < numLoud && envelope > loudPeak) {
+            loudPeak = envelope;
+        }
+        if (i >= quietMeasureStart && envelope > quietPeak) {
+            quietPeak = envelope;
+        }
+    }
+    TEST_ASSERT_TRUE(loudPeak > 0.1f);
+    TEST_ASSERT_TRUE(quietPeak > loudPeak / 2.0f);
+
+    sig_tempo_OnsetDetector_destroy(&allocator, detector);
+}
+
+void test_sig_tempo_OnsetDetector_ignoresQuietNoise(void) {
+    // White noise at -60 dBFS gives a zero envelope at the default
+    // threshold, once the noise's own onset has passed.
+    float sampleRate = audioSettings->sampleRate;
+    struct sig_tempo_OnsetDetector* detector =
+        sig_tempo_OnsetDetector_new(&allocator, sampleRate,
+            TEST_TEMPO_WINDOW_LENGTH, TEST_TEMPO_HOP_LENGTH, 2,
+            TEST_TEMPO_THRESHOLD);
+    struct sig_Random* random = sig_Random_new(&allocator, 5);
+
+    size_t settle = (size_t) (sampleRate * 0.1f);
+    size_t numSamples = (size_t) (sampleRate * 2.0f);
+    for (size_t i = 0; i < numSamples; i++) {
+        float sample = 0.001f * (2.0f * sig_Random_nextFloat(random) - 1.0f);
+        float envelope = sig_tempo_OnsetDetector_generate(detector, sample);
+        if (i >= settle) {
+            TEST_ASSERT_EQUAL_FLOAT(0.0f, envelope);
+        }
+    }
+
+    sig_Random_destroy(&allocator, random);
+    sig_tempo_OnsetDetector_destroy(&allocator, detector);
+}
+
+void test_sig_tempo_OnsetDetector_detectsPlucksInNoise(void) {
+    // Plucks at -40 dBFS in white noise at -60 dBFS give clear peaks.
+    float noisePeak;
+    float pluckPeak;
+    testTempo_measurePlucksInNoise(0.001f, 1.0f, TEST_TEMPO_THRESHOLD,
+        &noisePeak, &pluckPeak);
+    TEST_ASSERT_TRUE(pluckPeak > 0.1f);
+}
+
+void test_sig_tempo_OnsetDetector_appliesThreshold(void) {
+    // When the threshold rises to -30 dB, the detector ignores plucks
+    // at -40 dBFS.
+    float noisePeak;
+    float pluckPeak;
+    testTempo_measurePlucksInNoise(0.0f, 0.2f, -30.0f, &noisePeak,
+        &pluckPeak);
+    TEST_ASSERT_EQUAL_FLOAT(0.0f, pluckPeak);
+
+    // The threshold can also change while the detector runs.
+    float sampleRate = audioSettings->sampleRate;
+    struct sig_tempo_OnsetDetector* detector =
+        sig_tempo_OnsetDetector_new(&allocator, sampleRate,
+            TEST_TEMPO_WINDOW_LENGTH, TEST_TEMPO_HOP_LENGTH, 2, -30.0f);
+    double phases[6];
+    size_t pluckInterval = (size_t) (sampleRate * 0.5f);
+    float quietPeak = 0.0f;
+    float loudPeak = 0.0f;
+    for (size_t i = 0; i < 4 * pluckInterval; i++) {
+        size_t position = i % pluckInterval;
+        if (position == 0) {
+            testTempo_clearPhases(phases, 6);
+        }
+        if (i == 2 * pluckInterval) {
+            sig_tempo_OnsetDetector_setThreshold(detector, -70.0f);
+        }
+        double time = (double) position / sampleRate;
+        float sample = 0.01f * testTempo_pluckEnvelope(time, 0.15f) *
+            testTempo_harmonicTone(time, sampleRate, 330.0f, 6, 0.0f, 0.0f,
+                phases);
+        float envelope = sig_tempo_OnsetDetector_generate(detector, sample);
+        if (i < 2 * pluckInterval && envelope > quietPeak) {
+            quietPeak = envelope;
+        }
+        if (i >= 2 * pluckInterval && envelope > loudPeak) {
+            loudPeak = envelope;
+        }
+    }
+
+    TEST_ASSERT_EQUAL_FLOAT(0.0f, quietPeak);
+    TEST_ASSERT_TRUE(loudPeak > 0.1f);
+
+    sig_tempo_OnsetDetector_destroy(&allocator, detector);
+}
+
+void test_sig_tempo_OnsetDetector_detectsPluckOverToneQuickly(void) {
+    float peak;
+    float latency;
+    testTempo_measurePluckOverTone(audioSettings->sampleRate,
+        TEST_TEMPO_WINDOW_LENGTH, TEST_TEMPO_HOP_LENGTH, &peak, &latency);
+
+    TEST_ASSERT_TRUE(peak > 0.05f);
+    TEST_ASSERT_TRUE(latency <= 0.03f);
+}
+
+void test_sig_tempo_OnsetDetector_matchesAcrossSampleRates(void) {
+    // The node's window and hop lengths at each sample rate.
+    float peak48 = testTempo_measureClickPeaks(48000.0f, 2048, 557);
+    float peak441 = testTempo_measureClickPeaks(44100.0f, 2048, 512);
+    float peak96 = testTempo_measureClickPeaks(96000.0f, 4096, 1115);
+
+    TEST_ASSERT_TRUE(peak48 > 0.5f);
+    TEST_ASSERT_FLOAT_WITHIN(0.1f * peak48, peak48, peak441);
+    TEST_ASSERT_FLOAT_WITHIN(0.1f * peak48, peak48, peak96);
+
+    float pluckPeak441;
+    float pluckPeak96;
+    float latency;
+    testTempo_measurePluckOverTone(44100.0f, 2048, 512, &pluckPeak441,
+        &latency);
+    testTempo_measurePluckOverTone(96000.0f, 4096, 1115, &pluckPeak96,
+        &latency);
+    TEST_ASSERT_FLOAT_WITHIN(0.25f * pluckPeak441, pluckPeak441,
+        pluckPeak96);
+}
+
+#define TEST_TEMPO_NUM_HAT_PARTIALS 32
+
+// Synthesizes kick-like thumps and hi-hat-like noise bursts. A thump
+// is a sine that falls from 150 to 50 Hz, with a 5 ms attack, so its
+// energy lies below about 200 Hz. A burst is a sum of sines at random
+// frequencies from 7 to 15 kHz, with a 2 ms attack.
+struct testTempo_Drums {
+    float sampleRate;
+    float hatFrequencies[TEST_TEMPO_NUM_HAT_PARTIALS];
+    float hatPhases[TEST_TEMPO_NUM_HAT_PARTIALS];
+    double kickPhase;
+    float kickScale;
+    float hatScale;
+};
+
+static float testTempo_Drums_kick(struct testTempo_Drums* self,
+    double time) {
+    if (time == 0.0) {
+        self->kickPhase = 0.0;
+    }
+    double frequency = 50.0 + 100.0 * exp(-time / 0.03);
+    self->kickPhase += 2.0 * 3.141592653589793 * frequency /
+        (double) self->sampleRate;
+    float attack = (float) (time / 0.005);
+    if (attack > 1.0f) {
+        attack = 1.0f;
+    }
+
+    return self->kickScale * attack * expf((float) -time / 0.15f) *
+        sinf((float) self->kickPhase);
+}
+
+static float testTempo_Drums_hat(struct testTempo_Drums* self, double time,
+    size_t sample) {
+    float attack = (float) (time / 0.002);
+    if (attack > 1.0f) {
+        attack = 1.0f;
+    }
+    float sum = 0.0f;
+    for (size_t k = 0; k < TEST_TEMPO_NUM_HAT_PARTIALS; k++) {
+        double cycles = (double) self->hatFrequencies[k] * (double) sample /
+            (double) self->sampleRate;
+        sum += sinf(self->hatPhases[k] +
+            sig_TWOPI * (float) (cycles - floor(cycles)));
+    }
+
+    return self->hatScale * attack * expf((float) -time / 0.03f) * sum;
+}
+
+// Chooses the bursts' partials, and scales the thumps and bursts so
+// that each has a peak level of 1.
+static void testTempo_Drums_init(struct testTempo_Drums* self,
+    float sampleRate) {
+    struct sig_Random* random = sig_Random_new(&allocator, 3);
+    self->sampleRate = sampleRate;
+    for (size_t k = 0; k < TEST_TEMPO_NUM_HAT_PARTIALS; k++) {
+        self->hatFrequencies[k] = 7000.0f +
+            8000.0f * sig_Random_nextFloat(random);
+        self->hatPhases[k] = sig_TWOPI * sig_Random_nextFloat(random);
+    }
+    sig_Random_destroy(&allocator, random);
+
+    self->kickScale = 1.0f;
+    self->hatScale = 1.0f;
+    float kickPeak = 0.0f;
+    float hatPeak = 0.0f;
+    for (size_t i = 0; i < (size_t) (0.25f * sampleRate); i++) {
+        double time = (double) i / sampleRate;
+        float kick = fabsf(testTempo_Drums_kick(self, time));
+        float hat = fabsf(testTempo_Drums_hat(self, time, i));
+        kickPeak = kick > kickPeak ? kick : kickPeak;
+        hatPeak = hat > hatPeak ? hat : hatPeak;
+    }
+    self->kickScale = 1.0f / kickPeak;
+    self->hatScale = 1.0f / hatPeak;
+}
+
+void test_sig_tempo_OnsetDetector_favoursLowFrequencies(void) {
+    // Noise bursts above 6 kHz give much smaller peaks than kick-like
+    // thumps of the same peak level, each at 120 BPM.
+    float sampleRate = audioSettings->sampleRate;
+    struct testTempo_Drums drums;
+    testTempo_Drums_init(&drums, sampleRate);
+    size_t interval = (size_t) (0.5f * sampleRate);
+    float peaks[2] = {0.0f, 0.0f};
+
+    for (size_t kind = 0; kind < 2; kind++) {
+        struct sig_tempo_OnsetDetector* detector =
+            sig_tempo_OnsetDetector_new(&allocator, sampleRate,
+                TEST_TEMPO_WINDOW_LENGTH, TEST_TEMPO_HOP_LENGTH, 2,
+                TEST_TEMPO_THRESHOLD);
+        for (size_t i = 0; i < 4 * interval; i++) {
+            double time = (double) (i % interval) / sampleRate;
+            float sample = 0.5f * (kind == 0 ?
+                testTempo_Drums_kick(&drums, time) :
+                testTempo_Drums_hat(&drums, time, i));
+            float envelope = sig_tempo_OnsetDetector_generate(detector,
+                sample);
+            if (i >= interval && envelope > peaks[kind]) {
+                peaks[kind] = envelope;
+            }
+        }
+        sig_tempo_OnsetDetector_destroy(&allocator, detector);
+    }
+
+    TEST_ASSERT_TRUE(peaks[0] > 0.05f);
+    TEST_ASSERT_TRUE(peaks[1] < peaks[0] / 4.0f);
+}
+
+void test_sig_tempo_OnsetDetector_reportsNewValues(void) {
+    // The detector completes one analysis per hop.
+    struct sig_tempo_OnsetDetector* detector =
+        sig_tempo_OnsetDetector_new(&allocator, audioSettings->sampleRate,
+            TEST_TEMPO_WINDOW_LENGTH, TEST_TEMPO_HOP_LENGTH, 2,
+            TEST_TEMPO_THRESHOLD);
+
+    for (size_t i = 0; i < 4 * TEST_TEMPO_HOP_LENGTH; i++) {
+        sig_tempo_OnsetDetector_generate(detector, 0.0f);
+        bool isHopEnd = (i + 1) % TEST_TEMPO_HOP_LENGTH == 0;
+        TEST_ASSERT_EQUAL(isHopEnd,
+            sig_tempo_OnsetDetector_hasNewValue(detector));
+    }
+
+    sig_tempo_OnsetDetector_destroy(&allocator, detector);
+}
+
+void test_sig_tempo_OnsetDetector_countsBands(void) {
+    // 24 bands per octave from 30 Hz to 6 kHz give 101 bands with a
+    // 2048-sample window at 48 kHz, and 104 at 44.1 kHz, because the
+    // lowest filters merge where their centres share an FFT bin.
+    TEST_ASSERT_EQUAL(101,
+        sig_tempo_OnsetDetector_calcNumBands(48000.0f, 2048));
+    TEST_ASSERT_EQUAL(104,
+        sig_tempo_OnsetDetector_calcNumBands(44100.0f, 2048));
+
+    // At 11.025 kHz, with the same bin width as at 44.1 kHz, the bands
+    // stop at 0.45 times the sample rate.
+    TEST_ASSERT_TRUE(sig_tempo_OnsetDetector_calcNumBands(11025.0f, 512) <
+        sig_tempo_OnsetDetector_calcNumBands(44100.0f, 2048));
+}
+
+void test_sig_tempo_TempoEstimator_tracksTempo(void) {
+    // One impulse per beat of a 120 BPM beat, at an envelope rate of
+    // 86 values per second, gives one impulse every 43 values.
+    float envelopeRate = 86.0f;
+    size_t beatInterval = 43;
+    size_t numValues = 258;
+
+    struct sig_tempo_TempoEstimator* estimator =
+        sig_tempo_TempoEstimator_new(&allocator, envelopeRate, 30.0f,
+            200.0f);
+
+    float tempo = 0.0f;
+    for (size_t i = 0; i < numValues; i++) {
+        float value = (i % beatInterval == 0) ? 1.0f : 0.0f;
+        tempo = sig_tempo_TempoEstimator_generate(estimator, value);
+    }
+
+    TEST_ASSERT_FLOAT_WITHIN(3.0f, 120.0f, tempo);
+
+    sig_tempo_TempoEstimator_destroy(&allocator, estimator);
+}
+
+void test_sig_tempo_TempoEstimator_tracksSlowTempo(void) {
+    // One impulse every 86 values is 60 BPM at 86 values per second.
+    float envelopeRate = 86.0f;
+    size_t beatInterval = 86;
+    size_t numValues = 344;
+
+    struct sig_tempo_TempoEstimator* estimator =
+        sig_tempo_TempoEstimator_new(&allocator, envelopeRate, 30.0f,
+            200.0f);
+
+    float tempo = 0.0f;
+    for (size_t i = 0; i < numValues; i++) {
+        float value = (i % beatInterval == 0) ? 1.0f : 0.0f;
+        tempo = sig_tempo_TempoEstimator_generate(estimator, value);
+    }
+
+    TEST_ASSERT_FLOAT_WITHIN(3.0f, 60.0f, tempo);
+
+    sig_tempo_TempoEstimator_destroy(&allocator, estimator);
+}
+
+void test_sig_tempo_TempoEstimator_followsTempoChange(void) {
+    // 120 BPM for 3 seconds, then 90 BPM for 8 seconds, which fills
+    // the window, at an envelope rate of 86 values per second.
+    float envelopeRate = 86.0f;
+    size_t fastInterval = 43;
+    size_t slowInterval = 57;
+    size_t numFast = 258;
+    size_t numSlow = 688;
+    size_t numValues = numFast + numSlow;
+
+    struct sig_tempo_TempoEstimator* estimator =
+        sig_tempo_TempoEstimator_new(&allocator, envelopeRate, 30.0f,
+            200.0f);
+
+    float tempo = 0.0f;
+    float tempoBeforeChange = 0.0f;
+    for (size_t i = 0; i < numValues; i++) {
+        bool isFast = i < numFast;
+        size_t interval = isFast ? fastInterval : slowInterval;
+        size_t position = isFast ? i : i - numFast;
+        float value = (position % interval == 0) ? 1.0f : 0.0f;
+        tempo = sig_tempo_TempoEstimator_generate(estimator, value);
+        if (i == numFast - 43) {
+            tempoBeforeChange = tempo;
+        }
+    }
+
+    // The estimate tracks the fast tempo before the change...
+    TEST_ASSERT_FLOAT_WITHIN(3.0f, 120.0f, tempoBeforeChange);
+    // ...and the slow tempo once the window contains only the slow
+    // tempo.
+    TEST_ASSERT_FLOAT_WITHIN(3.0f, 90.0f, tempo);
+
+    sig_tempo_TempoEstimator_destroy(&allocator, estimator);
+}
+
+void test_sig_tempo_TempoEstimator_holdsTempoInSilence(void) {
+    // 120 BPM for 3 seconds, then silence for 2 seconds, at an
+    // envelope rate of 86 values per second.
+    float envelopeRate = 86.0f;
+    size_t beatInterval = 43;
+    size_t numBeats = 258;
+    size_t numValues = 430;
+
+    struct sig_tempo_TempoEstimator* estimator =
+        sig_tempo_TempoEstimator_new(&allocator, envelopeRate, 30.0f,
+            200.0f);
+
+    float tempo = 0.0f;
+    for (size_t i = 0; i < numValues; i++) {
+        float value = (i < numBeats && i % beatInterval == 0) ? 1.0f : 0.0f;
+        tempo = sig_tempo_TempoEstimator_generate(estimator, value);
+    }
+
+    // The estimate holds through the silence.
+    TEST_ASSERT_FLOAT_WITHIN(3.0f, 120.0f, tempo);
+
+    sig_tempo_TempoEstimator_destroy(&allocator, estimator);
+}
+
+void test_sig_tempo_TempoEstimator_holdsEstablishedLevel(void) {
+    // Clicks at 120 BPM for 10 seconds, then 10 seconds in which every
+    // other click is 26 dB quieter, at an envelope rate of 86 values
+    // per second. The accented clicks raise the 60 BPM level's score
+    // above 1.3 times, but not above 2 times, the 120 BPM level's
+    // score.
+    float envelopeRate = 86.0f;
+    size_t beatInterval = 43;
+    size_t numSteady = 860;
+    size_t numValues = 1720;
+
+    struct sig_tempo_TempoEstimator* estimator =
+        sig_tempo_TempoEstimator_new(&allocator, envelopeRate, 30.0f,
+            200.0f);
+
+    float tempo = 0.0f;
+    float tempoBeforeAccents = 0.0f;
+    for (size_t i = 0; i < numValues; i++) {
+        float value = 0.0f;
+        if (i % beatInterval == 0) {
+            bool isQuiet = i >= numSteady && (i / beatInterval) % 2 == 1;
+            value = isQuiet ? 0.05f : 1.0f;
+        }
+        tempo = sig_tempo_TempoEstimator_generate(estimator, value);
+        if (i == numSteady - 1) {
+            tempoBeforeAccents = tempo;
+        }
+
+        // The established estimate stays at 120 BPM throughout.
+        if (i >= numSteady) {
+            TEST_ASSERT_FLOAT_WITHIN(3.0f, 120.0f, tempo);
+        }
+    }
+
+    TEST_ASSERT_FLOAT_WITHIN(3.0f, 120.0f, tempoBeforeAccents);
+
+    sig_tempo_TempoEstimator_destroy(&allocator, estimator);
+}
+
+void test_sig_tempo_TempoEstimator_restrictsTempoRange(void) {
+    // One impulse every 86 values is 60 BPM at 86 values per second.
+    float envelopeRate = 86.0f;
+    size_t beatInterval = 86;
+    size_t numValues = 344;
+
+    struct sig_tempo_TempoEstimator* estimator =
+        sig_tempo_TempoEstimator_new(&allocator, envelopeRate, 30.0f,
+            200.0f);
+
+    float tempo = 0.0f;
+    for (size_t i = 0; i < numValues; i++) {
+        float value = (i % beatInterval == 0) ? 1.0f : 0.0f;
+        tempo = sig_tempo_TempoEstimator_generate(estimator, value);
+    }
+    TEST_ASSERT_FLOAT_WITHIN(3.0f, 60.0f, tempo);
+
+    // When the range excludes the estimate, the estimator chooses the
+    // best tempo in the new range at its next estimation.
+    sig_tempo_TempoEstimator_setTempoRange(estimator, 80.0f, 160.0f);
+    for (size_t i = numValues; i < numValues + 32; i++) {
+        float value = (i % beatInterval == 0) ? 1.0f : 0.0f;
+        tempo = sig_tempo_TempoEstimator_generate(estimator, value);
+    }
+    TEST_ASSERT_FLOAT_WITHIN(3.0f, 120.0f, tempo);
+
+    sig_tempo_TempoEstimator_destroy(&allocator, estimator);
+}
+
+#define TEST_TEMPO_MAX_BEATS 64
+#define TEST_TEMPO_MAX_WRAPS 128
+#define TEST_TEMPO_MAX_TAPS 8
+
+// A synthetic performance for a beat tracker: an envelope value and a
+// tempo estimate for each hop, and the beats' sample times.
+struct testTempo_Performance {
+    float sampleRate;
+    size_t hopLength;
+    size_t numHops;
+    float_array_ptr envelope;
+    float_array_ptr tempo;
+    double beatTimes[TEST_TEMPO_MAX_BEATS];
+    size_t numBeats;
+    double tapTimes[TEST_TEMPO_MAX_TAPS];
+    size_t numTaps;
+};
+
+// The sample times at which a beat tracker's phase wrapped, and the
+// number of samples on which the phase fell without wrapping.
+struct testTempo_TrackerRun {
+    double wrapTimes[TEST_TEMPO_MAX_WRAPS];
+    size_t numWraps;
+    size_t numBackwardSteps;
+};
+
+typedef float (*testTempo_TempoSchedule)(double time);
+
+static float testTempo_steadyTempo(double time) {
+    (void) time;
+    return 120.0f;
+}
+
+// 120 BPM slowing to 90 BPM over 8 seconds, from the first beat.
+static float testTempo_ritardandoTempo(double time) {
+    if (time < 0.25) {
+        return 120.0f;
+    }
+    if (time < 8.25) {
+        return 120.0f - 30.0f * (float) (time - 0.25) / 8.0f;
+    }
+
+    return 90.0f;
+}
+
+// 120 BPM until the beat at 8.25 seconds, and 100 BPM after it.
+static float testTempo_stepTempo(double time) {
+    return time < 8.2 ? 120.0f : 100.0f;
+}
+
+static void testTempo_Performance_init(struct testTempo_Performance* self,
+    float sampleRate, size_t hopLength, float duration,
+    testTempo_TempoSchedule tempoAt) {
+    self->sampleRate = sampleRate;
+    self->hopLength = hopLength;
+    self->numHops = (size_t) (duration * sampleRate / (float) hopLength);
+    self->envelope = sig_samples_new(&allocator, self->numHops);
+    self->tempo = sig_samples_new(&allocator, self->numHops);
+    self->numBeats = 0;
+    self->numTaps = 0;
+    sig_fillWithSilence(self->envelope, self->numHops);
+    for (size_t hop = 0; hop < self->numHops; hop++) {
+        double time = (double) ((hop + 1) * hopLength) / sampleRate;
+        FLOAT_ARRAY(self->tempo)[hop] = tempoAt(time);
+    }
+}
+
+static void testTempo_Performance_destroy(
+    struct testTempo_Performance* self) {
+    allocator.impl->free(&allocator, self->envelope);
+    allocator.impl->free(&allocator, self->tempo);
+}
+
+// Adds an onset at a time in seconds. As in the onset detector's
+// envelope, the onset raises the two envelope values whose frames
+// first contain it to the same value. Value i describes the hop that
+// ends at sample (i + 1) * hopLength, so the centre of the two values
+// lies one hop after the onset, on average.
+static void testTempo_Performance_addOnset(
+    struct testTempo_Performance* self, double time, float strength) {
+    size_t index = (size_t) ceil(time * self->sampleRate /
+        (double) self->hopLength) - 1;
+    if (index + 1 >= self->numHops) {
+        return;
+    }
+
+    FLOAT_ARRAY(self->envelope)[index] += strength;
+    FLOAT_ARRAY(self->envelope)[index + 1] += strength;
+}
+
+// Adds beats of the given strength from start to end seconds, spaced by
+// the schedule's tempo at each beat, with off-beats of the given
+// strength halfway between them when offBeatStrength is above zero.
+static void testTempo_Performance_addBeats(
+    struct testTempo_Performance* self, double start, double end,
+    testTempo_TempoSchedule tempoAt, float beatStrength,
+    float offBeatStrength) {
+    double time = start;
+    while (time < end && self->numBeats < TEST_TEMPO_MAX_BEATS) {
+        double interval = 60.0 / (double) tempoAt(time);
+        testTempo_Performance_addOnset(self, time, beatStrength);
+        self->beatTimes[self->numBeats] = time * self->sampleRate;
+        self->numBeats++;
+        if (offBeatStrength > 0.0f) {
+            testTempo_Performance_addOnset(self, time + 0.5 * interval,
+                offBeatStrength);
+        }
+        time += interval;
+    }
+}
+
+// Adds a tap at a time in seconds. Taps must be added in time order.
+static void testTempo_Performance_addTap(
+    struct testTempo_Performance* self, double time) {
+    if (self->numTaps < TEST_TEMPO_MAX_TAPS) {
+        self->tapTimes[self->numTaps] = time;
+        self->numTaps++;
+    }
+}
+
+// Runs a beat tracker over a performance, advancing the follower once
+// per sample, tapping it at the performance's taps, and passing it each
+// envelope value at the end of its hop. When states, confidences, or
+// tempos are not NULL, they receive the tracker's state, confidence, and
+// tempo after each hop.
+static void testTempo_runTracker(struct sig_tempo_BeatTracker* tracker,
+    struct testTempo_Performance* performance,
+    struct testTempo_TrackerRun* run, float* states, float* confidences,
+    float* tempos) {
+    size_t nextTap = 0;
+    run->numWraps = 0;
+    run->numBackwardSteps = 0;
+    float previousPhase = 0.0f;
+    size_t sampleTime = 0;
+    for (size_t hop = 0; hop < performance->numHops; hop++) {
+        for (size_t i = 0; i < performance->hopLength; i++) {
+            sampleTime++;
+            float phase = sig_tempo_BeatTracker_follow(tracker);
+            if (nextTap < performance->numTaps && sampleTime ==
+                (size_t) round(performance->tapTimes[nextTap] *
+                    performance->sampleRate)) {
+                sig_tempo_BeatTracker_tap(tracker);
+                nextTap++;
+            }
+            if (previousPhase - phase > 0.5f) {
+                if (run->numWraps < TEST_TEMPO_MAX_WRAPS) {
+                    run->wrapTimes[run->numWraps] = (double) sampleTime;
+                    run->numWraps++;
+                }
+            } else if (phase < previousPhase) {
+                run->numBackwardSteps++;
+            }
+            previousPhase = phase;
+        }
+
+        sig_tempo_BeatTracker_analyse(tracker,
+            FLOAT_ARRAY(performance->envelope)[hop],
+            FLOAT_ARRAY(performance->tempo)[hop]);
+        if (states != NULL) {
+            states[hop] = (float) sig_tempo_BeatTracker_state(tracker);
+        }
+        if (confidences != NULL) {
+            confidences[hop] = sig_tempo_BeatTracker_confidence(tracker);
+        }
+        if (tempos != NULL) {
+            tempos[hop] = sig_tempo_BeatTracker_tempo(tracker);
+        }
+    }
+}
+
+// Returns the signed distance in samples from a time to the nearest
+// phase wrap.
+static double testTempo_nearestWrapError(struct testTempo_TrackerRun* run,
+    double time) {
+    double nearest = 1.0e12;
+    for (size_t w = 0; w < run->numWraps; w++) {
+        double error = run->wrapTimes[w] - time;
+        if (fabs(error) < fabs(nearest)) {
+            nearest = error;
+        }
+    }
+
+    return nearest;
+}
+
+// Asserts that the phase never fell without wrapping, and that no two
+// wraps fell closer together than 0.6 of the shortest beat interval.
+static void testTempo_assertOneWrapPerBeat(struct testTempo_TrackerRun* run,
+    double shortestInterval) {
+    TEST_ASSERT_EQUAL(0, run->numBackwardSteps);
+    for (size_t w = 1; w < run->numWraps; w++) {
+        TEST_ASSERT_TRUE(run->wrapTimes[w] - run->wrapTimes[w - 1] >
+            0.6 * shortestInterval);
+    }
+}
+
+// Asserts that each beat from firstBeat onward has a wrap within
+// maxError seconds, and returns the RMS error in seconds.
+static double testTempo_assertBeatsFollowed(struct testTempo_TrackerRun* run,
+    struct testTempo_Performance* performance, size_t firstBeat,
+    double maxError) {
+    double sumOfSquares = 0.0;
+    size_t count = 0;
+    for (size_t b = firstBeat; b < performance->numBeats; b++) {
+        double error = testTempo_nearestWrapError(run,
+            performance->beatTimes[b]) / performance->sampleRate;
+        TEST_ASSERT_TRUE(fabs(error) <= maxError);
+        sumOfSquares += error * error;
+        count++;
+    }
+    TEST_ASSERT_TRUE(count > 0);
+
+    return sqrt(sumOfSquares / (double) count);
+}
+
+// Returns the index of the first beat at or after a time in seconds.
+static size_t testTempo_firstBeatAfter(
+    struct testTempo_Performance* performance, double time) {
+    size_t b = 0;
+    while (b < performance->numBeats &&
+        performance->beatTimes[b] < time * performance->sampleRate) {
+        b++;
+    }
+
+    return b;
+}
+
+static size_t testTempo_hopAt(struct testTempo_Performance* performance,
+    double time) {
+    return (size_t) (time * performance->sampleRate /
+        (double) performance->hopLength);
+}
+
+static struct sig_tempo_BeatTracker* testTempo_newTracker(float sampleRate) {
+    // The synthetic envelopes place each onset one hop early, on
+    // average.
+    return sig_tempo_BeatTracker_new(&allocator, sampleRate,
+        TEST_TEMPO_HOP_LENGTH, (float) TEST_TEMPO_HOP_LENGTH, 30.0f, 200.0f);
+}
+
+void test_sig_tempo_BeatTracker_runsAtEstimatedTempo(void) {
+    // With no onsets, the phase runs at the estimated tempo.
+    float sampleRate = audioSettings->sampleRate;
+    struct testTempo_Performance performance;
+    testTempo_Performance_init(&performance, sampleRate,
+        TEST_TEMPO_HOP_LENGTH, 3.0f, testTempo_steadyTempo);
+    struct sig_tempo_BeatTracker* tracker = testTempo_newTracker(sampleRate);
+    struct testTempo_TrackerRun run;
+
+    TEST_ASSERT_EQUAL(sig_tempo_BeatTracker_State_WAITING,
+        sig_tempo_BeatTracker_state(tracker));
+    TEST_ASSERT_EQUAL_FLOAT(0.0f, sig_tempo_BeatTracker_tempo(tracker));
+
+    testTempo_runTracker(tracker, &performance, &run, NULL, NULL, NULL);
+
+    TEST_ASSERT_EQUAL(sig_tempo_BeatTracker_State_SEARCHING,
+        sig_tempo_BeatTracker_state(tracker));
+    TEST_ASSERT_FLOAT_WITHIN(0.01f, 120.0f,
+        sig_tempo_BeatTracker_tempo(tracker));
+    TEST_ASSERT_EQUAL_FLOAT(0.0f, sig_tempo_BeatTracker_confidence(tracker));
+    TEST_ASSERT_TRUE(run.numWraps >= 5);
+    for (size_t w = 1; w < run.numWraps; w++) {
+        TEST_ASSERT_FLOAT_WITHIN(2.0, 0.5 * sampleRate,
+            run.wrapTimes[w] - run.wrapTimes[w - 1]);
+    }
+    testTempo_assertOneWrapPerBeat(&run, 0.5 * sampleRate);
+
+    sig_tempo_BeatTracker_destroy(&allocator, tracker);
+    testTempo_Performance_destroy(&performance);
+}
+
+void test_sig_tempo_BeatTracker_locksToSteadyBeats(void) {
+    float sampleRate = audioSettings->sampleRate;
+    struct testTempo_Performance performance;
+    testTempo_Performance_init(&performance, sampleRate,
+        TEST_TEMPO_HOP_LENGTH, 12.0f, testTempo_steadyTempo);
+    testTempo_Performance_addBeats(&performance, 0.25, 12.0,
+        testTempo_steadyTempo, 1.0f, 0.0f);
+    struct sig_tempo_BeatTracker* tracker = testTempo_newTracker(sampleRate);
+    struct testTempo_TrackerRun run;
+
+    testTempo_runTracker(tracker, &performance, &run, NULL, NULL, NULL);
+
+    // Once locked, each beat has a wrap within 30 ms.
+    testTempo_assertBeatsFollowed(&run, &performance,
+        testTempo_firstBeatAfter(&performance, 3.0), 0.03);
+    testTempo_assertOneWrapPerBeat(&run, 0.5 * sampleRate);
+    TEST_ASSERT_EQUAL(sig_tempo_BeatTracker_State_TRACKING,
+        sig_tempo_BeatTracker_state(tracker));
+    TEST_ASSERT_FLOAT_WITHIN(1.0f, 120.0f,
+        sig_tempo_BeatTracker_tempo(tracker));
+
+    sig_tempo_BeatTracker_destroy(&allocator, tracker);
+    testTempo_Performance_destroy(&performance);
+}
+
+void test_sig_tempo_BeatTracker_followsRitardando(void) {
+    // The tempo estimate follows the ritardando, as the estimator
+    // would after converging.
+    float sampleRate = audioSettings->sampleRate;
+    struct testTempo_Performance performance;
+    testTempo_Performance_init(&performance, sampleRate,
+        TEST_TEMPO_HOP_LENGTH, 11.0f, testTempo_ritardandoTempo);
+    testTempo_Performance_addBeats(&performance, 0.25, 11.0,
+        testTempo_ritardandoTempo, 1.0f, 0.0f);
+    struct sig_tempo_BeatTracker* tracker = testTempo_newTracker(sampleRate);
+    struct testTempo_TrackerRun run;
+
+    testTempo_runTracker(tracker, &performance, &run, NULL, NULL, NULL);
+
+    // Each beat after the first three has a wrap within 100 ms, and
+    // the RMS error stays below 60 ms.
+    double rmsError = testTempo_assertBeatsFollowed(&run, &performance, 3,
+        0.1);
+    TEST_ASSERT_TRUE(rmsError < 0.06);
+    testTempo_assertOneWrapPerBeat(&run, 0.5 * sampleRate);
+
+    sig_tempo_BeatTracker_destroy(&allocator, tracker);
+    testTempo_Performance_destroy(&performance);
+}
+
+void test_sig_tempo_BeatTracker_followsTempoStep(void) {
+    float sampleRate = audioSettings->sampleRate;
+    struct testTempo_Performance performance;
+    testTempo_Performance_init(&performance, sampleRate,
+        TEST_TEMPO_HOP_LENGTH, 14.0f, testTempo_stepTempo);
+    testTempo_Performance_addBeats(&performance, 0.25, 14.0,
+        testTempo_stepTempo, 1.0f, 0.0f);
+    struct sig_tempo_BeatTracker* tracker = testTempo_newTracker(sampleRate);
+    struct testTempo_TrackerRun run;
+
+    testTempo_runTracker(tracker, &performance, &run, NULL, NULL, NULL);
+
+    // From the fifth beat after the step, each beat has a wrap within
+    // 40 ms.
+    size_t firstAfterStep = testTempo_firstBeatAfter(&performance, 8.3);
+    testTempo_assertBeatsFollowed(&run, &performance, firstAfterStep + 4,
+        0.04);
+    testTempo_assertOneWrapPerBeat(&run, 0.5 * sampleRate);
+    TEST_ASSERT_FLOAT_WITHIN(2.0f, 100.0f,
+        sig_tempo_BeatTracker_tempo(tracker));
+
+    sig_tempo_BeatTracker_destroy(&allocator, tracker);
+    testTempo_Performance_destroy(&performance);
+}
+
+void test_sig_tempo_BeatTracker_keepsTempoThroughGap(void) {
+    // Beats at 120 BPM stop at 6 seconds, and resume at 10 seconds, 0.3
+    // beats late.
+    float sampleRate = audioSettings->sampleRate;
+    struct testTempo_Performance performance;
+    testTempo_Performance_init(&performance, sampleRate,
+        TEST_TEMPO_HOP_LENGTH, 14.0f, testTempo_steadyTempo);
+    testTempo_Performance_addBeats(&performance, 0.25, 6.0,
+        testTempo_steadyTempo, 1.0f, 0.0f);
+    size_t firstResumed = performance.numBeats;
+    testTempo_Performance_addBeats(&performance, 10.15, 14.0,
+        testTempo_steadyTempo, 1.0f, 0.0f);
+    struct sig_tempo_BeatTracker* tracker = testTempo_newTracker(sampleRate);
+    struct testTempo_TrackerRun run;
+
+    testTempo_runTracker(tracker, &performance, &run, NULL, NULL, NULL);
+
+    // Through the gap, the phase keeps its tempo.
+    size_t numGapWraps = 0;
+    for (size_t w = 1; w < run.numWraps; w++) {
+        if (run.wrapTimes[w - 1] > 6.5 * sampleRate &&
+            run.wrapTimes[w] < 10.0 * sampleRate) {
+            TEST_ASSERT_FLOAT_WITHIN(0.005 * sampleRate, 0.5 * sampleRate,
+                run.wrapTimes[w] - run.wrapTimes[w - 1]);
+            numGapWraps++;
+        }
+    }
+    TEST_ASSERT_TRUE(numGapWraps >= 5);
+
+    // From the third beat after the resumption, each beat has a wrap
+    // within 40 ms.
+    testTempo_assertBeatsFollowed(&run, &performance, firstResumed + 2,
+        0.04);
+    testTempo_assertOneWrapPerBeat(&run, 0.5 * sampleRate);
+
+    sig_tempo_BeatTracker_destroy(&allocator, tracker);
+    testTempo_Performance_destroy(&performance);
+}
+
+void test_sig_tempo_BeatTracker_ignoresOffBeats(void) {
+    // Off-beat onsets at 0.6 of the beats' strength do not move the
+    // phase.
+    float sampleRate = audioSettings->sampleRate;
+    struct testTempo_Performance performance;
+    testTempo_Performance_init(&performance, sampleRate,
+        TEST_TEMPO_HOP_LENGTH, 12.0f, testTempo_steadyTempo);
+    testTempo_Performance_addBeats(&performance, 0.25, 12.0,
+        testTempo_steadyTempo, 1.0f, 0.6f);
+    struct sig_tempo_BeatTracker* tracker = testTempo_newTracker(sampleRate);
+    struct testTempo_TrackerRun run;
+
+    testTempo_runTracker(tracker, &performance, &run, NULL, NULL, NULL);
+
+    testTempo_assertBeatsFollowed(&run, &performance,
+        testTempo_firstBeatAfter(&performance, 3.0), 0.03);
+    testTempo_assertOneWrapPerBeat(&run, 0.5 * sampleRate);
+
+    sig_tempo_BeatTracker_destroy(&allocator, tracker);
+    testTempo_Performance_destroy(&performance);
+}
+
+void test_sig_tempo_BeatTracker_reportsSilence(void) {
+    // Beats at 120 BPM until 5 seconds, then silence until 9 seconds,
+    // then beats again.
+    float sampleRate = audioSettings->sampleRate;
+    struct testTempo_Performance performance;
+    testTempo_Performance_init(&performance, sampleRate,
+        TEST_TEMPO_HOP_LENGTH, 11.0f, testTempo_steadyTempo);
+    testTempo_Performance_addBeats(&performance, 0.25, 5.0,
+        testTempo_steadyTempo, 1.0f, 0.0f);
+    testTempo_Performance_addBeats(&performance, 9.0, 11.0,
+        testTempo_steadyTempo, 1.0f, 0.0f);
+    float_array_ptr states = sig_samples_new(&allocator,
+        performance.numHops);
+    struct sig_tempo_BeatTracker* tracker = testTempo_newTracker(sampleRate);
+    struct testTempo_TrackerRun run;
+
+    testTempo_runTracker(tracker, &performance, &run, FLOAT_ARRAY(states),
+        NULL, NULL);
+
+    // The last beat sounds at 4.75 seconds. With the default timeout of
+    // four beats, the follower is still tracking three and a half beats
+    // later, and silent five beats later.
+    TEST_ASSERT_EQUAL(sig_tempo_BeatTracker_State_TRACKING,
+        FLOAT_ARRAY(states)[testTempo_hopAt(&performance, 4.9)]);
+    TEST_ASSERT_EQUAL(sig_tempo_BeatTracker_State_TRACKING,
+        FLOAT_ARRAY(states)[testTempo_hopAt(&performance, 6.5)]);
+    TEST_ASSERT_EQUAL(sig_tempo_BeatTracker_State_SILENT,
+        FLOAT_ARRAY(states)[testTempo_hopAt(&performance, 7.25)]);
+    TEST_ASSERT_EQUAL(sig_tempo_BeatTracker_State_SILENT,
+        FLOAT_ARRAY(states)[testTempo_hopAt(&performance, 8.9)]);
+    // The first strong beat after the silence returns it to tracking.
+    TEST_ASSERT_EQUAL(sig_tempo_BeatTracker_State_TRACKING,
+        sig_tempo_BeatTracker_state(tracker));
+    sig_tempo_BeatTracker_destroy(&allocator, tracker);
+
+    // With a timeout of eight beats, the follower is still tracking
+    // five beats after the last beat.
+    tracker = testTempo_newTracker(sampleRate);
+    sig_tempo_BeatTracker_setSilenceTimeout(tracker, 8.0f);
+    testTempo_runTracker(tracker, &performance, &run, FLOAT_ARRAY(states),
+        NULL, NULL);
+    TEST_ASSERT_EQUAL(sig_tempo_BeatTracker_State_TRACKING,
+        FLOAT_ARRAY(states)[testTempo_hopAt(&performance, 7.25)]);
+    TEST_ASSERT_EQUAL(sig_tempo_BeatTracker_State_SILENT,
+        FLOAT_ARRAY(states)[testTempo_hopAt(&performance, 9.2)]);
+
+    sig_tempo_BeatTracker_destroy(&allocator, tracker);
+    allocator.impl->free(&allocator, states);
+    testTempo_Performance_destroy(&performance);
+}
+
+void test_sig_tempo_BeatTracker_reportsConfidence(void) {
+    // Beats at 120 BPM until 8 seconds, then silence.
+    float sampleRate = audioSettings->sampleRate;
+    struct testTempo_Performance performance;
+    testTempo_Performance_init(&performance, sampleRate,
+        TEST_TEMPO_HOP_LENGTH, 12.0f, testTempo_steadyTempo);
+    testTempo_Performance_addBeats(&performance, 0.25, 8.0,
+        testTempo_steadyTempo, 1.0f, 0.0f);
+    float_array_ptr confidences = sig_samples_new(&allocator,
+        performance.numHops);
+    struct sig_tempo_BeatTracker* tracker = testTempo_newTracker(sampleRate);
+    struct testTempo_TrackerRun run;
+
+    testTempo_runTracker(tracker, &performance, &run, NULL,
+        FLOAT_ARRAY(confidences), NULL);
+
+    // The confidence starts at zero, rises toward 1 on steady beats...
+    TEST_ASSERT_EQUAL_FLOAT(0.0f, FLOAT_ARRAY(confidences)[0]);
+    float early = FLOAT_ARRAY(confidences)[testTempo_hopAt(&performance,
+        2.0)];
+    float late = FLOAT_ARRAY(confidences)[testTempo_hopAt(&performance,
+        8.0)];
+    TEST_ASSERT_TRUE(early > 0.0f);
+    TEST_ASSERT_TRUE(late > early);
+    TEST_ASSERT_TRUE(late > 0.9f);
+    for (size_t hop = 0; hop < testTempo_hopAt(&performance, 8.0); hop++) {
+        TEST_ASSERT_TRUE(FLOAT_ARRAY(confidences)[hop] <= 1.0f);
+    }
+
+    // ...and falls to zero in silence.
+    TEST_ASSERT_EQUAL_FLOAT(0.0f, sig_tempo_BeatTracker_confidence(tracker));
+
+    sig_tempo_BeatTracker_destroy(&allocator, tracker);
+    allocator.impl->free(&allocator, confidences);
+    testTempo_Performance_destroy(&performance);
+}
+
+static float testTempo_slowTempo(double time) {
+    (void) time;
+    return 100.0f;
+}
+
+static float testTempo_noTempo(double time) {
+    (void) time;
+    return 0.0f;
+}
+
+void test_sig_tempo_BeatTracker_tapMovesPhaseOntoBeats(void) {
+    // Off-beats are stronger than the beats, so the follower locks to
+    // them. A tap on the beat at 6.25 seconds moves it to the beats.
+    // With the beats at 0.85 of the off-beats' strength or below, the
+    // follower locks to the off-beats, and with the beats at 0.7 or
+    // above, the tap holds.
+    float sampleRate = audioSettings->sampleRate;
+    struct testTempo_Performance performance;
+    testTempo_Performance_init(&performance, sampleRate,
+        TEST_TEMPO_HOP_LENGTH, 16.0f, testTempo_steadyTempo);
+    testTempo_Performance_addBeats(&performance, 0.25, 16.0,
+        testTempo_steadyTempo, 0.75f, 1.0f);
+    testTempo_Performance_addTap(&performance, 6.25);
+    struct sig_tempo_BeatTracker* tracker = testTempo_newTracker(sampleRate);
+    struct testTempo_TrackerRun run;
+
+    testTempo_runTracker(tracker, &performance, &run, NULL, NULL, NULL);
+
+    // Before the tap, the wraps fall on the off-beats...
+    size_t beforeTap = testTempo_firstBeatAfter(&performance, 5.0);
+    TEST_ASSERT_TRUE(fabs(testTempo_nearestWrapError(&run,
+        performance.beatTimes[beforeTap])) > 0.2 * sampleRate);
+
+    // ...and from the second beat after the tap, once the output has
+    // closed its gap to the grid, for at least 16 beats, they fall
+    // within 30 ms of the beats.
+    size_t afterTap = testTempo_firstBeatAfter(&performance, 7.0);
+    TEST_ASSERT_TRUE(performance.numBeats - afterTap >= 16);
+    testTempo_assertBeatsFollowed(&run, &performance, afterTap, 0.03);
+    testTempo_assertOneWrapPerBeat(&run, 0.5 * sampleRate);
+
+    sig_tempo_BeatTracker_destroy(&allocator, tracker);
+    testTempo_Performance_destroy(&performance);
+}
+
+void test_sig_tempo_BeatTracker_tapsSetTempo(void) {
+    // Beats and taps at 100 BPM, while the estimate is 120 BPM.
+    float sampleRate = audioSettings->sampleRate;
+    struct testTempo_Performance performance;
+    testTempo_Performance_init(&performance, sampleRate,
+        TEST_TEMPO_HOP_LENGTH, 10.0f, testTempo_steadyTempo);
+    testTempo_Performance_addBeats(&performance, 0.5, 10.0,
+        testTempo_slowTempo, 1.0f, 0.0f);
+    for (size_t t = 0; t < 4; t++) {
+        testTempo_Performance_addTap(&performance, 0.5 + 0.6 * (double) t);
+    }
+    float_array_ptr tempos = sig_samples_new(&allocator,
+        performance.numHops);
+    struct sig_tempo_BeatTracker* tracker = testTempo_newTracker(sampleRate);
+    struct testTempo_TrackerRun run;
+
+    testTempo_runTracker(tracker, &performance, &run, NULL, NULL,
+        FLOAT_ARRAY(tempos));
+
+    // The taps set the tempo, and the follower stays at it.
+    TEST_ASSERT_FLOAT_WITHIN(1.0f, 100.0f,
+        FLOAT_ARRAY(tempos)[testTempo_hopAt(&performance, 1.15)]);
+    for (size_t hop = testTempo_hopAt(&performance, 1.15);
+        hop < performance.numHops; hop++) {
+        TEST_ASSERT_FLOAT_WITHIN(1.0f, 100.0f, FLOAT_ARRAY(tempos)[hop]);
+    }
+    testTempo_assertBeatsFollowed(&run, &performance, 2, 0.03);
+
+    sig_tempo_BeatTracker_destroy(&allocator, tracker);
+    allocator.impl->free(&allocator, tempos);
+    testTempo_Performance_destroy(&performance);
+}
+
+void test_sig_tempo_BeatTracker_twoTapsStartFollower(void) {
+    // With no tempo estimate and no onsets, taps at 0.5 and 1 seconds
+    // start the follower at 120 BPM.
+    float sampleRate = audioSettings->sampleRate;
+    struct testTempo_Performance performance;
+    testTempo_Performance_init(&performance, sampleRate,
+        TEST_TEMPO_HOP_LENGTH, 4.0f, testTempo_noTempo);
+    testTempo_Performance_addTap(&performance, 0.5);
+    testTempo_Performance_addTap(&performance, 1.0);
+    float_array_ptr states = sig_samples_new(&allocator,
+        performance.numHops);
+    float_array_ptr tempos = sig_samples_new(&allocator,
+        performance.numHops);
+    struct sig_tempo_BeatTracker* tracker = testTempo_newTracker(sampleRate);
+    struct testTempo_TrackerRun run;
+
+    testTempo_runTracker(tracker, &performance, &run, FLOAT_ARRAY(states),
+        NULL, FLOAT_ARRAY(tempos));
+
+    // The first tap only starts an interval...
+    size_t betweenTaps = testTempo_hopAt(&performance, 0.75);
+    TEST_ASSERT_EQUAL(sig_tempo_BeatTracker_State_WAITING,
+        FLOAT_ARRAY(states)[betweenTaps]);
+    TEST_ASSERT_EQUAL_FLOAT(0.0f, FLOAT_ARRAY(tempos)[betweenTaps]);
+
+    // ...and the second sets the tempo and starts the follower, which
+    // wraps on the tapped beats.
+    size_t afterTaps = testTempo_hopAt(&performance, 1.25);
+    TEST_ASSERT_EQUAL(sig_tempo_BeatTracker_State_TRACKING,
+        FLOAT_ARRAY(states)[afterTaps]);
+    TEST_ASSERT_FLOAT_WITHIN(0.1f, 120.0f, FLOAT_ARRAY(tempos)[afterTaps]);
+    TEST_ASSERT_TRUE(run.numWraps >= 5);
+    for (size_t w = 0; w < run.numWraps; w++) {
+        TEST_ASSERT_TRUE(run.wrapTimes[w] > 1.0 * sampleRate);
+        double offset = fmod(run.wrapTimes[w] - 1.0 * sampleRate,
+            0.5 * sampleRate);
+        TEST_ASSERT_TRUE(offset < 2.0 || offset > 0.5 * sampleRate - 2.0);
+    }
+
+    sig_tempo_BeatTracker_destroy(&allocator, tracker);
+    allocator.impl->free(&allocator, states);
+    allocator.impl->free(&allocator, tempos);
+    testTempo_Performance_destroy(&performance);
+}
+
+void test_sig_tempo_BeatTracker_reanchorsAfterSilenceFollowingTaps(void) {
+    // A tap at 3.25 seconds, then beats stop at 6 seconds and resume at
+    // 10 seconds, 0.3 beats late.
+    float sampleRate = audioSettings->sampleRate;
+    struct testTempo_Performance performance;
+    testTempo_Performance_init(&performance, sampleRate,
+        TEST_TEMPO_HOP_LENGTH, 14.0f, testTempo_steadyTempo);
+    testTempo_Performance_addBeats(&performance, 0.25, 6.0,
+        testTempo_steadyTempo, 1.0f, 0.0f);
+    size_t firstResumed = performance.numBeats;
+    testTempo_Performance_addBeats(&performance, 10.15, 14.0,
+        testTempo_steadyTempo, 1.0f, 0.0f);
+    testTempo_Performance_addTap(&performance, 3.25);
+    struct sig_tempo_BeatTracker* tracker = testTempo_newTracker(sampleRate);
+    struct testTempo_TrackerRun run;
+
+    testTempo_runTracker(tracker, &performance, &run, NULL, NULL, NULL);
+
+    // From the third beat after the resumption, each beat has a wrap
+    // within 40 ms.
+    testTempo_assertBeatsFollowed(&run, &performance, firstResumed + 2,
+        0.04);
+    testTempo_assertOneWrapPerBeat(&run, 0.5 * sampleRate);
+
+    sig_tempo_BeatTracker_destroy(&allocator, tracker);
+    testTempo_Performance_destroy(&performance);
+}
+
+#define TEST_TEMPO_MAX_TRIGGERS 32
+
+// The rising edges and lengths of the clock triggers that a clock
+// generator produced.
+struct testTempo_ClockRun {
+    size_t triggerTimes[TEST_TEMPO_MAX_TRIGGERS];
+    size_t triggerLengths[TEST_TEMPO_MAX_TRIGGERS];
+    size_t numTriggers;
+    float maxPhase;
+};
+
+// Runs a clock generator over a phase ramp at 120 BPM, with a constant
+// follower state and confidence. From switchTime onward, the tempo
+// input changes to switchTempo.
+static void testTempo_runClock(struct sig_tempo_ClockGenerator* generator,
+    enum sig_tempo_BeatTracker_State state, size_t numSamples,
+    size_t switchTime, float switchTempo, struct testTempo_ClockRun* run) {
+    struct sig_tempo_ClockGenerator_Outputs outputs;
+    float period = 0.5f * audioSettings->sampleRate;
+    float previousClock = 0.0f;
+    run->numTriggers = 0;
+    run->maxPhase = 0.0f;
+    for (size_t i = 0; i < numSamples; i++) {
+        float phase = (float) i / period;
+        phase -= floorf(phase);
+        float tempo = i < switchTime ? 120.0f : switchTempo;
+        sig_tempo_ClockGenerator_generate(generator, phase, tempo, 0.75f,
+            state, &outputs);
+
+        TEST_ASSERT_EQUAL_FLOAT(tempo, outputs.bpm);
+        TEST_ASSERT_EQUAL_FLOAT(0.75f, outputs.confidence);
+        if (outputs.phase > run->maxPhase) {
+            run->maxPhase = outputs.phase;
+        }
+        if (outputs.clock > 0.5f && previousClock <= 0.5f &&
+            run->numTriggers < TEST_TEMPO_MAX_TRIGGERS) {
+            run->triggerTimes[run->numTriggers] = i;
+            run->triggerLengths[run->numTriggers] = 0;
+            run->numTriggers++;
+        }
+        if (outputs.clock > 0.5f && run->numTriggers > 0) {
+            run->triggerLengths[run->numTriggers - 1]++;
+        }
+        previousClock = outputs.clock;
+    }
+}
+
+void test_sig_tempo_ClockGenerator_firesEarlyByLead(void) {
+    float sampleRate = audioSettings->sampleRate;
+    size_t numSamples = (size_t) (2.2f * sampleRate);
+    struct sig_tempo_ClockGenerator generator;
+    struct testTempo_ClockRun onBeat;
+    struct testTempo_ClockRun early;
+
+    sig_tempo_ClockGenerator_init(&generator, sampleRate);
+    testTempo_runClock(&generator, sig_tempo_BeatTracker_State_TRACKING,
+        numSamples, numSamples, 120.0f, &onBeat);
+
+    sig_tempo_ClockGenerator_init(&generator, sampleRate);
+    sig_tempo_ClockGenerator_setLead(&generator, 0.1f);
+    testTempo_runClock(&generator, sig_tempo_BeatTracker_State_TRACKING,
+        numSamples, numSamples, 120.0f, &early);
+
+    // Without a lead, the clock fires when the phase wraps, every half
+    // second.
+    TEST_ASSERT_EQUAL(4, onBeat.numTriggers);
+    for (size_t t = 0; t < onBeat.numTriggers; t++) {
+        TEST_ASSERT_INT_WITHIN(1, (t + 1) * 24000, onBeat.triggerTimes[t]);
+    }
+
+    // With a lead of 100 ms, it fires 100 ms earlier.
+    TEST_ASSERT_EQUAL(4, early.numTriggers);
+    for (size_t t = 0; t < onBeat.numTriggers; t++) {
+        TEST_ASSERT_INT_WITHIN(1, onBeat.triggerTimes[t] - 4800,
+            early.triggerTimes[t]);
+    }
+}
+
+void test_sig_tempo_ClockGenerator_firesOncePerBeat(void) {
+    // With a lead of 200 ms, a fall in tempo from 120 to 100 BPM just
+    // after a trigger steps the shifted phase back across the wrap.
+    float sampleRate = audioSettings->sampleRate;
+    size_t numSamples = (size_t) (2.2f * sampleRate);
+    struct sig_tempo_ClockGenerator generator;
+    struct testTempo_ClockRun run;
+
+    sig_tempo_ClockGenerator_init(&generator, sampleRate);
+    sig_tempo_ClockGenerator_setLead(&generator, 0.2f);
+    // The first trigger fires 200 ms before the phase wraps at 0.5 s.
+    size_t switchTime = 24000 - 9600 + 100;
+    testTempo_runClock(&generator, sig_tempo_BeatTracker_State_TRACKING,
+        numSamples, switchTime, 100.0f, &run);
+
+    TEST_ASSERT_TRUE(run.numTriggers >= 4);
+    for (size_t t = 1; t < run.numTriggers; t++) {
+        TEST_ASSERT_TRUE(run.triggerTimes[t] - run.triggerTimes[t - 1] >
+            12000);
+    }
+}
+
+void test_sig_tempo_ClockGenerator_holdsTriggerDuration(void) {
+    float sampleRate = audioSettings->sampleRate;
+    size_t numSamples = (size_t) (1.2f * sampleRate);
+    struct sig_tempo_ClockGenerator generator;
+    struct testTempo_ClockRun run;
+
+    // The default trigger lasts 10 ms.
+    sig_tempo_ClockGenerator_init(&generator, sampleRate);
+    testTempo_runClock(&generator, sig_tempo_BeatTracker_State_TRACKING,
+        numSamples, numSamples, 120.0f, &run);
+    TEST_ASSERT_EQUAL(2, run.numTriggers);
+    for (size_t t = 0; t < run.numTriggers; t++) {
+        TEST_ASSERT_EQUAL(480, run.triggerLengths[t]);
+    }
+
+    sig_tempo_ClockGenerator_init(&generator, sampleRate);
+    sig_tempo_ClockGenerator_setTriggerDuration(&generator, 0.002f);
+    testTempo_runClock(&generator, sig_tempo_BeatTracker_State_TRACKING,
+        numSamples, numSamples, 120.0f, &run);
+    TEST_ASSERT_EQUAL(2, run.numTriggers);
+    for (size_t t = 0; t < run.numTriggers; t++) {
+        TEST_ASSERT_EQUAL(96, run.triggerLengths[t]);
+    }
+}
+
+void test_sig_tempo_ClockGenerator_followsSilenceBehaviour(void) {
+    float sampleRate = audioSettings->sampleRate;
+    size_t numSamples = (size_t) (1.2f * sampleRate);
+    struct sig_tempo_ClockGenerator generator;
+    struct testTempo_ClockRun run;
+
+    // By default, the clock mutes while the follower is silent...
+    sig_tempo_ClockGenerator_init(&generator, sampleRate);
+    testTempo_runClock(&generator, sig_tempo_BeatTracker_State_SILENT,
+        numSamples, numSamples, 120.0f, &run);
+    TEST_ASSERT_EQUAL(0, run.numTriggers);
+    TEST_ASSERT_EQUAL_FLOAT(0.0f, run.maxPhase);
+
+    // ...and free-runs when the silence behaviour is 1.
+    sig_tempo_ClockGenerator_setSilenceBehaviour(&generator, 1.0f);
+    testTempo_runClock(&generator, sig_tempo_BeatTracker_State_SILENT,
+        numSamples, numSamples, 120.0f, &run);
+    TEST_ASSERT_EQUAL(2, run.numTriggers);
+    TEST_ASSERT_TRUE(run.maxPhase > 0.99f);
+
+    // The clock always mutes while the follower is searching.
+    testTempo_runClock(&generator, sig_tempo_BeatTracker_State_SEARCHING,
+        numSamples, numSamples, 120.0f, &run);
+    TEST_ASSERT_EQUAL(0, run.numTriggers);
+    TEST_ASSERT_EQUAL_FLOAT(0.0f, run.maxPhase);
+}
+
+#define TEST_TEMPO_MAX_NOTES 64
+#define TEST_TEMPO_MAX_NODE_TRIGGERS 64
+
+// A synthesized performance for a tempo detector: clicks or plucked
+// notes at given times and amplitudes, optionally over a drone with
+// vibrato.
+struct testTempo_Score {
+    float sampleRate;
+    double noteTimes[TEST_TEMPO_MAX_NOTES];
+    float noteAmplitudes[TEST_TEMPO_MAX_NOTES];
+    size_t numNotes;
+    bool isPlucked;
+    float droneAmplitude;
+    size_t nextNote;
+    size_t noteStart;
+    float noteAmplitude;
+    double notePhases[6];
+    double dronePhases[6];
+};
+
+// What a tempo detector's outputs did during a run.
+struct testTempo_NodeRun {
+    double triggerTimes[TEST_TEMPO_MAX_NODE_TRIGGERS];
+    size_t numTriggers;
+    float maxPhaseInWindow;
+    float bpm;
+    float confidence;
+};
+
+static void testTempo_Score_init(struct testTempo_Score* self,
+    float sampleRate, bool isPlucked, float droneAmplitude) {
+    self->sampleRate = sampleRate;
+    self->numNotes = 0;
+    self->isPlucked = isPlucked;
+    self->droneAmplitude = droneAmplitude;
+    self->nextNote = 0;
+    self->noteStart = 0;
+    self->noteAmplitude = 0.0f;
+    testTempo_clearPhases(self->notePhases, 6);
+    testTempo_clearPhases(self->dronePhases, 6);
+}
+
+// Adds notes from start to end seconds, spaced by interval seconds.
+static void testTempo_Score_addNotes(struct testTempo_Score* self,
+    double start, double end, double interval, float amplitude) {
+    for (double time = start; time < end &&
+        self->numNotes < TEST_TEMPO_MAX_NOTES; time += interval) {
+        self->noteTimes[self->numNotes] = time;
+        self->noteAmplitudes[self->numNotes] = amplitude;
+        self->numNotes++;
+    }
+}
+
+static float testTempo_Score_generate(struct testTempo_Score* self,
+    size_t sample) {
+    float sampleRate = self->sampleRate;
+    float output = 0.0f;
+    bool isNoteStart = false;
+    if (self->nextNote < self->numNotes && sample ==
+        (size_t) round(self->noteTimes[self->nextNote] * sampleRate)) {
+        self->noteStart = sample;
+        self->noteAmplitude = self->noteAmplitudes[self->nextNote];
+        testTempo_clearPhases(self->notePhases, 6);
+        self->nextNote++;
+        isNoteStart = true;
+    }
+
+    if (!self->isPlucked) {
+        output = isNoteStart ? self->noteAmplitude : 0.0f;
+    } else if (self->nextNote > 0) {
+        double time = (double) (sample - self->noteStart) / sampleRate;
+        output = self->noteAmplitude * testTempo_pluckEnvelope(time, 0.3f) *
+            testTempo_harmonicTone(time, sampleRate, 220.0f, 6, 0.0f, 0.0f,
+                self->notePhases);
+    }
+
+    if (self->droneAmplitude > 0.0f) {
+        output += self->droneAmplitude * testTempo_harmonicTone(
+            (double) sample / sampleRate, sampleRate, 110.0f, 6, 0.03f, 5.5f,
+            self->dronePhases);
+    }
+
+    return output;
+}
+
+// Runs a tempo detector over a score, and records the clock's rising
+// edges, the largest phase from windowStart to windowEnd seconds, and
+// the final tempo and confidence.
+static void testTempo_runDetector(struct sig_dsp_TempoDetector* detector,
+    struct testTempo_Score* score, double duration, double windowStart,
+    double windowEnd, struct testTempo_NodeRun* run) {
+    struct sig_AudioSettings* settings = detector->signal.audioSettings;
+    float_array_ptr source = sig_AudioBlock_newSilent(&allocator, settings);
+    detector->inputs.source = source;
+    size_t numBlocks = (size_t) (duration * settings->sampleRate /
+        (double) settings->blockSize);
+    size_t sample = 0;
+    float previousClock = 0.0f;
+    run->numTriggers = 0;
+    run->maxPhaseInWindow = 0.0f;
+
+    for (size_t block = 0; block < numBlocks; block++) {
+        for (size_t i = 0; i < settings->blockSize; i++) {
+            FLOAT_ARRAY(source)[i] = testTempo_Score_generate(score,
+                sample + i);
+        }
+
+        detector->signal.generate(detector);
+
+        for (size_t i = 0; i < settings->blockSize; i++) {
+            double time = (double) sample / settings->sampleRate;
+            float clock = FLOAT_ARRAY(detector->outputs.clock)[i];
+            float phase = FLOAT_ARRAY(detector->outputs.phase)[i];
+            if (clock > 0.5f && previousClock <= 0.5f &&
+                run->numTriggers < TEST_TEMPO_MAX_NODE_TRIGGERS) {
+                run->triggerTimes[run->numTriggers] = time;
+                run->numTriggers++;
+            }
+            if (time >= windowStart && time < windowEnd &&
+                phase > run->maxPhaseInWindow) {
+                run->maxPhaseInWindow = phase;
+            }
+            previousClock = clock;
+            sample++;
+        }
+    }
+
+    run->bpm = FLOAT_ARRAY(detector->outputs.bpm)[settings->blockSize - 1];
+    run->confidence =
+        FLOAT_ARRAY(detector->outputs.confidence)[settings->blockSize - 1];
+    sig_AudioBlock_destroy(&allocator, source);
+}
+
+static double testTempo_nearestTime(const double* times, size_t numTimes,
+    double time) {
+    double nearest = 1.0e9;
+    for (size_t i = 0; i < numTimes; i++) {
+        if (fabs(times[i] - time) < fabs(nearest - time)) {
+            nearest = times[i];
+        }
+    }
+
+    return nearest;
+}
+
+// Asserts that, from a time in seconds onward, each note has a trigger
+// within maxError seconds, and each trigger has a note within maxError
+// seconds.
+static void testTempo_assertTriggersOnNotes(struct testTempo_NodeRun* run,
+    struct testTempo_Score* score, double from, double maxError) {
+    size_t numChecked = 0;
+    for (size_t n = 0; n < score->numNotes; n++) {
+        double note = score->noteTimes[n];
+        if (note < from) {
+            continue;
+        }
+        double trigger = testTempo_nearestTime(run->triggerTimes,
+            run->numTriggers, note);
+        TEST_ASSERT_TRUE(fabs(trigger - note) <= maxError);
+        numChecked++;
+    }
+    TEST_ASSERT_TRUE(numChecked > 0);
+
+    for (size_t t = 0; t < run->numTriggers; t++) {
+        double trigger = run->triggerTimes[t];
+        if (trigger < from) {
+            continue;
+        }
+        double note = testTempo_nearestTime(score->noteTimes,
+            score->numNotes, trigger);
+        TEST_ASSERT_TRUE(fabs(trigger - note) <= maxError);
+    }
+}
+
+// Checks that a tempo detector follows a click track at 120 BPM at a
+// sample rate.
+static void testTempo_checkClickTrack(float sampleRate) {
+    struct sig_AudioSettings* localSettings =
+        sig_AudioSettings_new(&allocator);
+    localSettings->sampleRate = sampleRate;
+    struct sig_SignalContext* localContext =
+        sig_SignalContext_new(&allocator, localSettings);
+    struct sig_dsp_TempoDetector* detector =
+        sig_dsp_TempoDetector_new(&allocator, localContext);
+    struct testTempo_Score score;
+    struct testTempo_NodeRun run;
+
+    testTempo_Score_init(&score, sampleRate, false, 0.0f);
+    testTempo_Score_addNotes(&score, 0.25, 9.0, 0.5, 1.0f);
+    testTempo_runDetector(detector, &score, 9.0, 0.0, 0.0, &run);
+
+    // Once locked, each click has a trigger within 30 ms.
+    testTempo_assertTriggersOnNotes(&run, &score, 4.0, 0.03);
+    TEST_ASSERT_FLOAT_WITHIN(1.0f, 120.0f, run.bpm);
+    TEST_ASSERT_TRUE(run.confidence > 0.5f);
+
+    sig_dsp_TempoDetector_destroy(&allocator, detector);
+    sig_SignalContext_destroy(&allocator, localContext);
+    sig_AudioSettings_destroy(&allocator, localSettings);
+}
+
+void test_sig_dsp_TempoDetector_tracksClickTrack(void) {
+    testTempo_checkClickTrack(48000.0f);
+}
+
+void test_sig_dsp_TempoDetector_tracksPluckedTones(void) {
+    // Plucked notes at 100 BPM over a drone with vibrato.
+    float sampleRate = audioSettings->sampleRate;
+    struct sig_dsp_TempoDetector* detector =
+        sig_dsp_TempoDetector_new(&allocator, context);
+    struct testTempo_Score score;
+    struct testTempo_NodeRun run;
+
+    testTempo_Score_init(&score, sampleRate, true, 0.3f);
+    testTempo_Score_addNotes(&score, 0.3, 12.0, 0.6, 0.6f);
+    testTempo_runDetector(detector, &score, 12.0, 0.0, 0.0, &run);
+
+    TEST_ASSERT_FLOAT_WITHIN(2.0f, 100.0f, run.bpm);
+    testTempo_assertTriggersOnNotes(&run, &score, 6.0, 0.03);
+    for (size_t t = 1; t < run.numTriggers; t++) {
+        if (run.triggerTimes[t - 1] >= 6.0) {
+            TEST_ASSERT_FLOAT_WITHIN(0.03, 0.6,
+                run.triggerTimes[t] - run.triggerTimes[t - 1]);
+        }
+    }
+
+    sig_dsp_TempoDetector_destroy(&allocator, detector);
+}
+
+void test_sig_dsp_TempoDetector_followsSilenceBehaviour(void) {
+    // Clicks at 120 BPM stop at 6 seconds. The follower becomes silent
+    // about four and a half beats after the last click.
+    float sampleRate = audioSettings->sampleRate;
+    struct testTempo_Score score;
+    struct testTempo_NodeRun run;
+
+    // By default, the clock mutes in silence.
+    struct sig_dsp_TempoDetector* detector =
+        sig_dsp_TempoDetector_new(&allocator, context);
+    testTempo_Score_init(&score, sampleRate, false, 0.0f);
+    testTempo_Score_addNotes(&score, 0.25, 6.0, 0.5, 1.0f);
+    testTempo_runDetector(detector, &score, 10.0, 8.5, 10.0, &run);
+
+    TEST_ASSERT_TRUE(run.numTriggers > 6);
+    TEST_ASSERT_TRUE(run.triggerTimes[run.numTriggers - 1] < 8.5);
+    TEST_ASSERT_EQUAL_FLOAT(0.0f, run.maxPhaseInWindow);
+    TEST_ASSERT_EQUAL_FLOAT(0.0f, run.confidence);
+    TEST_ASSERT_FLOAT_WITHIN(1.0f, 120.0f, run.bpm);
+    sig_dsp_TempoDetector_destroy(&allocator, detector);
+
+    // When silenceBehaviour is 1, the clock keeps running at the tempo.
+    detector = sig_dsp_TempoDetector_new(&allocator, context);
+    detector->parameters.silenceBehaviour = 1.0f;
+    testTempo_Score_init(&score, sampleRate, false, 0.0f);
+    testTempo_Score_addNotes(&score, 0.25, 6.0, 0.5, 1.0f);
+    testTempo_runDetector(detector, &score, 10.0, 8.5, 10.0, &run);
+
+    size_t numSilentTriggers = 0;
+    for (size_t t = 1; t < run.numTriggers; t++) {
+        if (run.triggerTimes[t - 1] >= 8.5) {
+            TEST_ASSERT_FLOAT_WITHIN(0.01, 0.5,
+                run.triggerTimes[t] - run.triggerTimes[t - 1]);
+            numSilentTriggers++;
+        }
+    }
+    TEST_ASSERT_TRUE(numSilentTriggers >= 2);
+    TEST_ASSERT_TRUE(run.maxPhaseInWindow > 0.9f);
+    sig_dsp_TempoDetector_destroy(&allocator, detector);
+}
+
+void test_sig_dsp_TempoDetector_tracksQuietPassage(void) {
+    // Plucked notes at 120 BPM drop from -6 dBFS to -40 dBFS at 5
+    // seconds.
+    float sampleRate = audioSettings->sampleRate;
+    struct sig_dsp_TempoDetector* detector =
+        sig_dsp_TempoDetector_new(&allocator, context);
+    struct testTempo_Score score;
+    struct testTempo_NodeRun run;
+
+    testTempo_Score_init(&score, sampleRate, true, 0.0f);
+    testTempo_Score_addNotes(&score, 0.25, 5.0, 0.5, 1.0f);
+    testTempo_Score_addNotes(&score, 5.25, 12.0, 0.5, 0.02f);
+    testTempo_runDetector(detector, &score, 12.0, 0.0, 0.0, &run);
+
+    testTempo_assertTriggersOnNotes(&run, &score, 8.0, 0.03);
+
+    sig_dsp_TempoDetector_destroy(&allocator, detector);
+}
+
+void test_sig_dsp_TempoDetector_followsKicksUnderHiHats(void) {
+    // Hi-hat-like bursts on the off-beats at 120 BPM start at 0.25
+    // seconds, and kick-like thumps on the beats, at half the bursts'
+    // peak level, start at 0.5 seconds.
+    float sampleRate = audioSettings->sampleRate;
+    size_t blockSize = audioSettings->blockSize;
+    struct sig_dsp_TempoDetector* detector =
+        sig_dsp_TempoDetector_new(&allocator, context);
+    float_array_ptr source = sig_AudioBlock_newSilent(&allocator,
+        audioSettings);
+    detector->inputs.source = source;
+    struct testTempo_Drums drums;
+    testTempo_Drums_init(&drums, sampleRate);
+    size_t interval = (size_t) (0.5f * sampleRate);
+    size_t numBlocks = (size_t) (12.0f * sampleRate) / blockSize;
+    float previousClock = 0.0f;
+    size_t numTriggers = 0;
+
+    for (size_t block = 0; block < numBlocks; block++) {
+        for (size_t i = 0; i < blockSize; i++) {
+            size_t sample = block * blockSize + i;
+            float value = 0.0f;
+            if (sample >= interval) {
+                value += 0.25f * testTempo_Drums_kick(&drums,
+                    (double) (sample % interval) / sampleRate);
+            }
+            if (sample >= interval / 2) {
+                value += 0.5f * testTempo_Drums_hat(&drums,
+                    (double) ((sample + interval / 2) % interval) /
+                        sampleRate, sample);
+            }
+            FLOAT_ARRAY(source)[i] = value;
+        }
+
+        detector->signal.generate(detector);
+
+        for (size_t i = 0; i < blockSize; i++) {
+            float clock = FLOAT_ARRAY(detector->outputs.clock)[i];
+            double time = (double) (block * blockSize + i) / sampleRate;
+            if (clock > 0.5f && previousClock <= 0.5f && time >= 4.0) {
+                // Each trigger falls within 30 ms of a thump.
+                double offset = fmod(time, 0.5);
+                if (offset > 0.25) {
+                    offset -= 0.5;
+                }
+                TEST_ASSERT_TRUE(fabs(offset) <= 0.03);
+                numTriggers++;
+            }
+            previousClock = clock;
+        }
+    }
+
+    TEST_ASSERT_TRUE(numTriggers >= 15);
+
+    sig_AudioBlock_destroy(&allocator, source);
+    sig_dsp_TempoDetector_destroy(&allocator, detector);
+}
+
+void test_sig_dsp_TempoDetector_followsSyncTaps(void) {
+    // Loud clicks on the off-beats and quieter clicks on the beats at
+    // 120 BPM, with taps on the sync input on the beats at 6.25 and 6.75
+    // seconds.
+    float sampleRate = audioSettings->sampleRate;
+    size_t blockSize = audioSettings->blockSize;
+    struct sig_dsp_TempoDetector* detector =
+        sig_dsp_TempoDetector_new(&allocator, context);
+    float_array_ptr source = sig_AudioBlock_newSilent(&allocator,
+        audioSettings);
+    float_array_ptr sync = sig_AudioBlock_newSilent(&allocator,
+        audioSettings);
+    detector->inputs.source = source;
+    detector->inputs.sync = sync;
+    size_t interval = (size_t) (0.5f * sampleRate);
+    size_t numBlocks = (size_t) (16.0f * sampleRate) / blockSize;
+    size_t tapLength = (size_t) (0.01f * sampleRate);
+    float previousClock = 0.0f;
+    size_t numOffBeatTriggers = 0;
+    size_t numBeatTriggers = 0;
+
+    for (size_t block = 0; block < numBlocks; block++) {
+        for (size_t i = 0; i < blockSize; i++) {
+            size_t sample = block * blockSize + i;
+            size_t position = (sample + interval / 2) % interval;
+            float value = 0.0f;
+            if (sample >= interval / 2 && position == 0) {
+                value = 0.5f;
+            } else if (sample >= interval / 2 &&
+                position == interval / 2) {
+                value = 1.0f;
+            }
+            FLOAT_ARRAY(source)[i] = value;
+
+            bool isTapping = (sample >= 12 * interval + interval / 2 &&
+                sample < 12 * interval + interval / 2 + tapLength) ||
+                (sample >= 13 * interval + interval / 2 &&
+                sample < 13 * interval + interval / 2 + tapLength);
+            FLOAT_ARRAY(sync)[i] = isTapping ? 1.0f : 0.0f;
+        }
+
+        detector->signal.generate(detector);
+
+        for (size_t i = 0; i < blockSize; i++) {
+            float clock = FLOAT_ARRAY(detector->outputs.clock)[i];
+            double time = (double) (block * blockSize + i) / sampleRate;
+            if (clock > 0.5f && previousClock <= 0.5f) {
+                double offset = fmod(time - 0.25, 0.5);
+                if (offset > 0.25) {
+                    offset -= 0.5;
+                }
+                // Before the taps, the clock follows the off-beats...
+                if (time >= 4.0 && time < 6.0) {
+                    TEST_ASSERT_TRUE(fabs(offset) > 0.2);
+                    numOffBeatTriggers++;
+                }
+                // ...and from the second beat after the taps, the
+                // tapped beats.
+                if (time >= 7.5) {
+                    TEST_ASSERT_TRUE(fabs(offset) <= 0.03);
+                    numBeatTriggers++;
+                }
+            }
+            previousClock = clock;
+        }
+    }
+
+    TEST_ASSERT_TRUE(numOffBeatTriggers >= 3);
+    TEST_ASSERT_TRUE(numBeatTriggers >= 16);
+
+    sig_AudioBlock_destroy(&allocator, source);
+    sig_AudioBlock_destroy(&allocator, sync);
+    sig_dsp_TempoDetector_destroy(&allocator, detector);
+}
+
+void test_sig_dsp_TempoDetector_tracksClickTrackAt44100(void) {
+    testTempo_checkClickTrack(44100.0f);
+}
+
+void test_sig_dsp_TempoDetector_tracksClickTrackAt96000(void) {
+    testTempo_checkClickTrack(96000.0f);
+}
+
+void test_sig_dsp_ClockPhasor(void) {
+    struct sig_dsp_ClockPhasor* phasor = sig_dsp_ClockPhasor_new(&allocator,
+        context);
+    float_array_ptr pulse = sig_AudioBlock_new(&allocator, audioSettings);
+    phasor->inputs.pulse = pulse;
+    size_t period = 100;
+    size_t blockSize = audioSettings->blockSize;
+
+    // The phasor follows the pulses across blocks. After its second pulse,
+    // it completes one cycle per period.
+    for (size_t block = 0; block < 20; block++) {
+        for (size_t i = 0; i < blockSize; i++) {
+            size_t n = block * blockSize + i;
+            FLOAT_ARRAY(pulse)[i] = n % period < CLOCK_PULSE_WIDTH ?
+                1.0f : 0.0f;
+        }
+
+        phasor->signal.generate(phasor);
+
+        for (size_t i = 0; i < blockSize; i++) {
+            size_t n = block * blockSize + i;
+            float expected = n < period ? 0.0f :
+                (float) ((n - period) % period) / (float) period;
+            TEST_ASSERT_FLOAT_WITHIN(0.0001f, 0.0f, phaseDistance(expected,
+                FLOAT_ARRAY(phasor->outputs.main)[i]));
+        }
+    }
+
+    sig_dsp_ClockPhasor_destroy(&allocator, phasor);
+}
+
 void test_sig_dsp_Sequencer_stepsInOrder(void) {
     // With 1-sample steps, the output advances one value per sample,
     // cycling through all values when looping.
@@ -2995,14 +6077,22 @@ int main(void) {
     RUN_TEST(test_sig_fillWithValue);
     RUN_TEST(test_sig_fillWithSilence);
     RUN_TEST(test_sig_AudioSettings_new);
+    RUN_TEST(test_sig_MALLOC_acceptsAddressOfAllocator);
     RUN_TEST(test_sig_samplesToSeconds);
     RUN_TEST(test_sig_AudioBlock_newWithValue);
     RUN_TEST(test_sig_interpolate_linear_wrapsAtEnd);
     RUN_TEST(test_sig_osc_Wavetable_negativePhaseStaysWithinTable);
+    RUN_TEST(test_sig_FFT_forward);
+    RUN_TEST(test_sig_FFT_inverse);
     RUN_TEST(test_sig_waveform_harmonicGain);
     RUN_TEST(test_sig_waveform_harmonicTaper);
     RUN_TEST(test_sig_STANDARD_WAVEFORMS);
+    RUN_TEST(test_sig_waveform_sinePhaseTriangle);
+    RUN_TEST(test_sig_waveform_sinePhaseSaw);
+    RUN_TEST(test_sig_waveform_sinePhaseHarmonicGain);
+    RUN_TEST(test_sig_SINE_PHASE_WAVEFORMS);
     RUN_TEST(test_sig_Buffer_fillWithHarmonics_matchesWaveforms);
+    RUN_TEST(test_sig_Buffer_fillWithHarmonics_matchesSinePhaseWaveforms);
     RUN_TEST(test_sig_Buffer_fillWithHarmonics_lanczosLimitsOvershoot);
     RUN_TEST(test_sig_Buffer_fillWithHarmonics_isBandlimited);
     RUN_TEST(test_sig_WavetableBank_readLinearAtPhase_wrapsTableIndex);
@@ -3066,6 +6156,76 @@ int main(void) {
     RUN_TEST(test_sig_filter_Ladder_calcStageInput);
     RUN_TEST(test_sig_filter_Ladder_calcStages);
     RUN_TEST(test_sig_dsp_Ladder_outputs);
+    RUN_TEST(test_sig_osc_RatioPhasor_locksToWholeRatio);
+    RUN_TEST(test_sig_osc_RatioPhasor_locksAcrossReferenceCycles);
+    RUN_TEST(test_sig_osc_RatioPhasor_locksWhenTransposedByOctaves);
+    RUN_TEST(test_sig_osc_RatioPhasor_glidesAfterRatioChange);
+    RUN_TEST(test_sig_osc_RatioPhasor_followsWithoutLocking);
+    RUN_TEST(test_sig_osc_RatioPhasor_followsFractionalTransposition);
+    RUN_TEST(test_sig_osc_RatioPhasor_followsDenominatorBelowOne);
+    RUN_TEST(test_sig_osc_RatioPhasor_limitsFrequency);
+    RUN_TEST(test_sig_osc_RatioPhasor_limitsToNyquistByDefault);
+    RUN_TEST(test_sig_osc_PeakFrequency_measuresPhaseRate);
+    RUN_TEST(test_sig_osc_PeakFrequency_holdsAndReleasesPeak);
+    RUN_TEST(test_sig_snapToInteger);
+    RUN_TEST(test_sig_dsp_SnapToInteger);
+    RUN_TEST(test_sig_dsp_Phasor);
+    RUN_TEST(test_sig_dsp_RatioPhasor);
+    RUN_TEST(test_sig_dsp_RatioPhasor_transposesByOctaves);
+    RUN_TEST(test_sig_dsp_RatioPhasor_limitsFrequency);
+    RUN_TEST(test_sig_dsp_WavetableReader);
+    RUN_TEST(test_sig_dsp_AdditiveWavetableBankReader);
+    RUN_TEST(test_sig_dsp_AdditiveWavetableBankReader_selectsLevelFromPeak);
+    RUN_TEST(test_sig_dsp_RatioPhasor_phaseModulationHasNoDC);
+    RUN_TEST(test_sig_dsp_WavetableBankReader);
+    RUN_TEST(test_sig_osc_ClockPhasor_followsPulses);
+    RUN_TEST(test_sig_osc_ClockPhasor_spreadsCorrection);
+    RUN_TEST(test_sig_osc_ClockPhasor_slowsWithoutJumping);
+    RUN_TEST(test_sig_osc_ClockPhasor_keepsFrequencyWhenPulsesStop);
+    RUN_TEST(test_sig_dsp_ClockPhasor);
+    RUN_TEST(test_sig_tempo_OnsetDetector_silence);
+    RUN_TEST(test_sig_tempo_OnsetDetector_detectsOnsets);
+    RUN_TEST(test_sig_tempo_OnsetDetector_ignoresVibrato);
+    RUN_TEST(test_sig_tempo_OnsetDetector_whitensDynamics);
+    RUN_TEST(test_sig_tempo_OnsetDetector_ignoresVibratoOnRichTone);
+    RUN_TEST(test_sig_tempo_OnsetDetector_ignoresQuietNoise);
+    RUN_TEST(test_sig_tempo_OnsetDetector_detectsPlucksInNoise);
+    RUN_TEST(test_sig_tempo_OnsetDetector_appliesThreshold);
+    RUN_TEST(test_sig_tempo_OnsetDetector_detectsPluckOverToneQuickly);
+    RUN_TEST(test_sig_tempo_OnsetDetector_matchesAcrossSampleRates);
+    RUN_TEST(test_sig_tempo_OnsetDetector_favoursLowFrequencies);
+    RUN_TEST(test_sig_tempo_OnsetDetector_reportsNewValues);
+    RUN_TEST(test_sig_tempo_OnsetDetector_countsBands);
+    RUN_TEST(test_sig_tempo_TempoEstimator_tracksTempo);
+    RUN_TEST(test_sig_tempo_TempoEstimator_tracksSlowTempo);
+    RUN_TEST(test_sig_tempo_TempoEstimator_followsTempoChange);
+    RUN_TEST(test_sig_tempo_TempoEstimator_holdsTempoInSilence);
+    RUN_TEST(test_sig_tempo_TempoEstimator_restrictsTempoRange);
+    RUN_TEST(test_sig_tempo_TempoEstimator_holdsEstablishedLevel);
+    RUN_TEST(test_sig_tempo_BeatTracker_runsAtEstimatedTempo);
+    RUN_TEST(test_sig_tempo_BeatTracker_locksToSteadyBeats);
+    RUN_TEST(test_sig_tempo_BeatTracker_followsRitardando);
+    RUN_TEST(test_sig_tempo_BeatTracker_followsTempoStep);
+    RUN_TEST(test_sig_tempo_BeatTracker_keepsTempoThroughGap);
+    RUN_TEST(test_sig_tempo_BeatTracker_ignoresOffBeats);
+    RUN_TEST(test_sig_tempo_BeatTracker_reportsSilence);
+    RUN_TEST(test_sig_tempo_BeatTracker_reportsConfidence);
+    RUN_TEST(test_sig_tempo_BeatTracker_tapMovesPhaseOntoBeats);
+    RUN_TEST(test_sig_tempo_BeatTracker_tapsSetTempo);
+    RUN_TEST(test_sig_tempo_BeatTracker_twoTapsStartFollower);
+    RUN_TEST(test_sig_tempo_BeatTracker_reanchorsAfterSilenceFollowingTaps);
+    RUN_TEST(test_sig_tempo_ClockGenerator_firesEarlyByLead);
+    RUN_TEST(test_sig_tempo_ClockGenerator_firesOncePerBeat);
+    RUN_TEST(test_sig_tempo_ClockGenerator_holdsTriggerDuration);
+    RUN_TEST(test_sig_tempo_ClockGenerator_followsSilenceBehaviour);
+    RUN_TEST(test_sig_dsp_TempoDetector_tracksClickTrack);
+    RUN_TEST(test_sig_dsp_TempoDetector_tracksPluckedTones);
+    RUN_TEST(test_sig_dsp_TempoDetector_followsSilenceBehaviour);
+    RUN_TEST(test_sig_dsp_TempoDetector_tracksQuietPassage);
+    RUN_TEST(test_sig_dsp_TempoDetector_followsKicksUnderHiHats);
+    RUN_TEST(test_sig_dsp_TempoDetector_followsSyncTaps);
+    RUN_TEST(test_sig_dsp_TempoDetector_tracksClickTrackAt44100);
+    RUN_TEST(test_sig_dsp_TempoDetector_tracksClickTrackAt96000);
     RUN_TEST(test_sig_dsp_Sequencer_stepsInOrder);
     RUN_TEST(test_sig_dsp_Sequencer_stepDuration);
     RUN_TEST(test_sig_dsp_Sequencer_looping);

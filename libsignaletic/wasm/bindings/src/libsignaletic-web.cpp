@@ -122,6 +122,25 @@ public:
         return sig_dsp_Clamp_destroy(allocator, self);
     }
 
+    struct sig_dsp_SnapToInteger* SnapToInteger_new(
+        struct sig_Allocator* allocator, struct sig_SignalContext* context) {
+        return sig_dsp_SnapToInteger_new(allocator, context);
+    }
+
+    void SnapToInteger_init(struct sig_dsp_SnapToInteger* self,
+        struct sig_SignalContext* context) {
+        sig_dsp_SnapToInteger_init(self, context);
+    }
+
+    void SnapToInteger_generate(void* signal) {
+        sig_dsp_SnapToInteger_generate(signal);
+    }
+
+    void SnapToInteger_destroy(struct sig_Allocator* allocator,
+        struct sig_dsp_SnapToInteger* self) {
+        sig_dsp_SnapToInteger_destroy(allocator, self);
+    }
+
     struct sig_dsp_ScaleOffset* ScaleOffset_new(
         struct sig_Allocator* allocator,
         struct sig_SignalContext* context) {
@@ -465,6 +484,103 @@ public:
         sig_dsp_AdditiveWavetableBankOscillator_destroy(allocator, self);
     }
 
+    void Phasor_init(struct sig_dsp_Phasor* self,
+        struct sig_SignalContext* context) {
+        sig_dsp_Phasor_init(self, context);
+    }
+
+    struct sig_dsp_Phasor* Phasor_new(struct sig_Allocator* allocator,
+        struct sig_SignalContext* context) {
+        return sig_dsp_Phasor_new(allocator, context);
+    }
+
+    void Phasor_generate(void* signal) {
+        sig_dsp_Phasor_generate(signal);
+    }
+
+    void Phasor_destroy(struct sig_Allocator* allocator,
+        struct sig_dsp_Phasor* self) {
+        sig_dsp_Phasor_destroy(allocator, self);
+    }
+
+    void RatioPhasor_init(struct sig_dsp_RatioPhasor* self,
+        struct sig_SignalContext* context) {
+        sig_dsp_RatioPhasor_init(self, context);
+    }
+
+    struct sig_dsp_RatioPhasor* RatioPhasor_new(
+        struct sig_Allocator* allocator, struct sig_SignalContext* context) {
+        return sig_dsp_RatioPhasor_new(allocator, context);
+    }
+
+    void RatioPhasor_generate(void* signal) {
+        sig_dsp_RatioPhasor_generate(signal);
+    }
+
+    void RatioPhasor_destroy(struct sig_Allocator* allocator,
+        struct sig_dsp_RatioPhasor* self) {
+        sig_dsp_RatioPhasor_destroy(allocator, self);
+    }
+
+    void WavetableReader_init(struct sig_dsp_WavetableReader* self,
+        struct sig_SignalContext* context) {
+        sig_dsp_WavetableReader_init(self, context);
+    }
+
+    struct sig_dsp_WavetableReader* WavetableReader_new(
+        struct sig_Allocator* allocator, struct sig_SignalContext* context) {
+        return sig_dsp_WavetableReader_new(allocator, context);
+    }
+
+    void WavetableReader_generate(void* signal) {
+        sig_dsp_WavetableReader_generate(signal);
+    }
+
+    void WavetableReader_destroy(struct sig_Allocator* allocator,
+        struct sig_dsp_WavetableReader* self) {
+        sig_dsp_WavetableReader_destroy(allocator, self);
+    }
+
+    void WavetableBankReader_init(struct sig_dsp_WavetableBankReader* self,
+        struct sig_SignalContext* context) {
+        sig_dsp_WavetableBankReader_init(self, context);
+    }
+
+    struct sig_dsp_WavetableBankReader* WavetableBankReader_new(
+        struct sig_Allocator* allocator, struct sig_SignalContext* context) {
+        return sig_dsp_WavetableBankReader_new(allocator, context);
+    }
+
+    void WavetableBankReader_generate(void* signal) {
+        sig_dsp_WavetableBankReader_generate(signal);
+    }
+
+    void WavetableBankReader_destroy(struct sig_Allocator* allocator,
+        struct sig_dsp_WavetableBankReader* self) {
+        sig_dsp_WavetableBankReader_destroy(allocator, self);
+    }
+
+    void AdditiveWavetableBankReader_init(
+        struct sig_dsp_AdditiveWavetableBankReader* self,
+        struct sig_SignalContext* context) {
+        sig_dsp_AdditiveWavetableBankReader_init(self, context);
+    }
+
+    struct sig_dsp_AdditiveWavetableBankReader*
+        AdditiveWavetableBankReader_new(struct sig_Allocator* allocator,
+        struct sig_SignalContext* context) {
+        return sig_dsp_AdditiveWavetableBankReader_new(allocator, context);
+    }
+
+    void AdditiveWavetableBankReader_generate(void* signal) {
+        sig_dsp_AdditiveWavetableBankReader_generate(signal);
+    }
+
+    void AdditiveWavetableBankReader_destroy(struct sig_Allocator* allocator,
+        struct sig_dsp_AdditiveWavetableBankReader* self) {
+        sig_dsp_AdditiveWavetableBankReader_destroy(allocator, self);
+    }
+
     void FastLFSineOscillator_init(
         struct sig_dsp_FastLFSineOscillator* self,
         struct sig_SignalContext* context) {
@@ -713,6 +829,66 @@ public:
     void ClockDetector_destroy(struct sig_Allocator* allocator,
         struct sig_dsp_ClockDetector* self) {
         return sig_dsp_ClockDetector_destroy(allocator, self);
+    }
+
+    void ClockPhasor_init(struct sig_dsp_ClockPhasor* self,
+        struct sig_SignalContext* context) {
+        sig_dsp_ClockPhasor_init(self, context);
+    }
+
+    struct sig_dsp_ClockPhasor* ClockPhasor_new(
+        struct sig_Allocator* allocator, struct sig_SignalContext* context) {
+        return sig_dsp_ClockPhasor_new(allocator, context);
+    }
+
+    void ClockPhasor_generate(void* signal) {
+        sig_dsp_ClockPhasor_generate(signal);
+    }
+
+    void ClockPhasor_destroy(struct sig_Allocator* allocator,
+        struct sig_dsp_ClockPhasor* self) {
+        sig_dsp_ClockPhasor_destroy(allocator, self);
+    }
+
+    size_t TempoDetector_calcWindowLength(float sampleRate) {
+        return sig_dsp_TempoDetector_calcWindowLength(sampleRate);
+    }
+
+    size_t TempoDetector_calcHopLength(float sampleRate) {
+        return sig_dsp_TempoDetector_calcHopLength(sampleRate);
+    }
+
+    void TempoDetector_Outputs_newAudioBlocks(
+        struct sig_Allocator* allocator,
+        struct sig_AudioSettings* audioSettings,
+        struct sig_dsp_TempoDetector_Outputs* outputs) {
+        sig_dsp_TempoDetector_Outputs_newAudioBlocks(allocator,
+            audioSettings, outputs);
+    }
+
+    void TempoDetector_Outputs_destroyAudioBlocks(
+        struct sig_Allocator* allocator,
+        struct sig_dsp_TempoDetector_Outputs* outputs) {
+        sig_dsp_TempoDetector_Outputs_destroyAudioBlocks(allocator, outputs);
+    }
+
+    void TempoDetector_init(struct sig_dsp_TempoDetector* self,
+        struct sig_SignalContext* context) {
+        sig_dsp_TempoDetector_init(self, context);
+    }
+
+    struct sig_dsp_TempoDetector* TempoDetector_new(
+        struct sig_Allocator* allocator, struct sig_SignalContext* context) {
+        return sig_dsp_TempoDetector_new(allocator, context);
+    }
+
+    void TempoDetector_generate(void* signal) {
+        sig_dsp_TempoDetector_generate(signal);
+    }
+
+    void TempoDetector_destroy(struct sig_Allocator* allocator,
+        struct sig_dsp_TempoDetector* self) {
+        sig_dsp_TempoDetector_destroy(allocator, self);
     }
 
     struct sig_dsp_LinearToFreq* LinearToFreq_new(
@@ -1241,6 +1417,10 @@ public:
         return sig_clamp(value, min, max);
     }
 
+    float snapToInteger(float value, float tolerance) {
+        return sig_snapToInteger(value, tolerance);
+    }
+
     float flooredfmodf(float num, float denom) {
         return sig_flooredfmodf(num, denom);
     }
@@ -1545,8 +1725,28 @@ public:
         return sig_waveform_reverseSawHarmonicGain(harmonic);
     }
 
+    float waveform_sinePhaseTriangle(float phase) {
+        return sig_waveform_sinePhaseTriangle(phase);
+    }
+
+    float waveform_sinePhaseSaw(float phase) {
+        return sig_waveform_sinePhaseSaw(phase);
+    }
+
+    float waveform_sinePhaseTriangleHarmonicGain(size_t harmonic) {
+        return sig_waveform_sinePhaseTriangleHarmonicGain(harmonic);
+    }
+
+    float waveform_sinePhaseSawHarmonicGain(size_t harmonic) {
+        return sig_waveform_sinePhaseSawHarmonicGain(harmonic);
+    }
+
     const struct sig_WaveformShape* STANDARD_WAVEFORMS(size_t index) {
         return &sig_STANDARD_WAVEFORMS[index];
+    }
+
+    const struct sig_WaveformShape* SINE_PHASE_WAVEFORMS(size_t index) {
+        return &sig_SINE_PHASE_WAVEFORMS[index];
     }
 
     float waveform_harmonicGain(enum sig_StandardWaveform waveform,
@@ -1620,6 +1820,56 @@ public:
         float phaseOffset, float tableIndex, float sampleRate, void* eocOut) {
         return sig_osc_AdditiveWavetableBank_generate(self, frequency,
             phaseOffset, tableIndex, sampleRate, (float*) eocOut);
+    }
+
+    float osc_AdditiveWavetableBank_readAtPhase(
+        struct sig_osc_AdditiveWavetableBank* self, float frequency,
+        float phase, float tableIndex) {
+        return sig_osc_AdditiveWavetableBank_readAtPhase(self, frequency,
+            phase, tableIndex);
+    }
+
+    void osc_RatioPhasor_init(struct sig_osc_RatioPhasor* self) {
+        sig_osc_RatioPhasor_init(self);
+    }
+
+    void osc_RatioPhasor_calculateCoefficient(
+        struct sig_osc_RatioPhasor* self, float glide, float sampleRate) {
+        sig_osc_RatioPhasor_calculateCoefficient(self, glide, sampleRate);
+    }
+
+    void osc_RatioPhasor_setMaxFrequency(struct sig_osc_RatioPhasor* self,
+        float maxFrequency, float sampleRate) {
+        sig_osc_RatioPhasor_setMaxFrequency(self, maxFrequency, sampleRate);
+    }
+
+    float osc_RatioPhasor_generate(struct sig_osc_RatioPhasor* self,
+        float reference, float numerator, float denominator, float octaves) {
+        return sig_osc_RatioPhasor_generate(self, reference, numerator,
+            denominator, octaves);
+    }
+
+    void osc_ClockPhasor_init(struct sig_osc_ClockPhasor* self) {
+        sig_osc_ClockPhasor_init(self);
+    }
+
+    float osc_ClockPhasor_generate(struct sig_osc_ClockPhasor* self,
+        float pulse, float threshold) {
+        return sig_osc_ClockPhasor_generate(self, pulse, threshold);
+    }
+
+    void osc_PeakFrequency_init(struct sig_osc_PeakFrequency* self) {
+        sig_osc_PeakFrequency_init(self);
+    }
+
+    void osc_PeakFrequency_calculateCoefficient(
+        struct sig_osc_PeakFrequency* self, float release, float sampleRate) {
+        sig_osc_PeakFrequency_calculateCoefficient(self, release, sampleRate);
+    }
+
+    float osc_PeakFrequency_generate(struct sig_osc_PeakFrequency* self,
+        float phase, float sampleRate) {
+        return sig_osc_PeakFrequency_generate(self, phase, sampleRate);
     }
 
 
@@ -1774,10 +2024,34 @@ public:
     }
 
     void Buffer_fillWithHarmonics(struct sig_Buffer* buffer,
-        struct sig_Buffer* sineTable, const struct sig_WaveformShape* shape,
-        size_t numHarmonics, enum sig_HarmonicTaper taper) {
-        sig_Buffer_fillWithHarmonics(buffer, sineTable, shape,
+        struct sig_FFT* fft, float_array_ptr imaginary,
+        const struct sig_WaveformShape* shape, size_t numHarmonics,
+        enum sig_HarmonicTaper taper) {
+        sig_Buffer_fillWithHarmonics(buffer, fft, imaginary, shape,
             numHarmonics, taper);
+    }
+
+    void FFT_init(struct sig_FFT* fft, size_t length,
+        float_array_ptr cosines, float_array_ptr sines) {
+        sig_FFT_init(fft, length, cosines, sines);
+    }
+
+    struct sig_FFT* FFT_new(struct sig_Allocator* allocator, size_t length) {
+        return sig_FFT_new(allocator, length);
+    }
+
+    void FFT_forward(struct sig_FFT* fft, float_array_ptr real,
+        float_array_ptr imaginary) {
+        sig_FFT_forward(fft, real, imaginary);
+    }
+
+    void FFT_inverse(struct sig_FFT* fft, float_array_ptr real,
+        float_array_ptr imaginary) {
+        sig_FFT_inverse(fft, real, imaginary);
+    }
+
+    void FFT_destroy(struct sig_Allocator* allocator, struct sig_FFT* fft) {
+        sig_FFT_destroy(allocator, fft);
     }
 
     void Buffer_destroy(struct sig_Allocator* allocator,
@@ -1794,6 +2068,11 @@ public:
     void BufferView_destroy(struct sig_Allocator* allocator,
         struct sig_Buffer* self) {
         sig_BufferView_destroy(allocator, self);
+    }
+
+    float_array_ptr samples_new(struct sig_Allocator* allocator,
+        size_t length) {
+        return sig_samples_new(allocator, length);
     }
 
     float_array_ptr AudioBlock_new(struct sig_Allocator* allocator,
@@ -1832,9 +2111,9 @@ public:
     }
 
     void AdditiveWavetableBank_fill(
-        struct sig_AdditiveWavetableBank* wavetables,
-        struct sig_Buffer* sineTable) {
-        sig_AdditiveWavetableBank_fill(wavetables, sineTable);
+        struct sig_AdditiveWavetableBank* wavetables, struct sig_FFT* fft,
+        float_array_ptr imaginary) {
+        sig_AdditiveWavetableBank_fill(wavetables, fft, imaginary);
     }
 
     float AdditiveWavetableBank_levelForFrequency(
@@ -1997,6 +2276,185 @@ public:
     void DelayLine_destroy(struct sig_Allocator* allocator,
         struct sig_DelayLine* self) {
         sig_DelayLine_destroy(allocator, self);
+    }
+
+    size_t tempo_OnsetDetector_calcNumBands(float sampleRate,
+        size_t windowLength) {
+        return sig_tempo_OnsetDetector_calcNumBands(sampleRate, windowLength);
+    }
+
+    void tempo_OnsetDetector_init(
+        struct sig_tempo_OnsetDetector* onsetDetector, float sampleRate,
+        size_t windowLength, size_t hopLength, size_t diffLagHops,
+        float threshold, struct sig_FFT* fft, float_array_ptr window,
+        float_array_ptr frame, float_array_ptr real,
+        float_array_ptr imaginary, float_array_ptr bandEdges,
+        float_array_ptr bandWeights, float_array_ptr bandPeaks,
+        float_array_ptr bandRows) {
+        sig_tempo_OnsetDetector_init(onsetDetector, sampleRate, windowLength,
+            hopLength, diffLagHops, threshold, fft, window, frame, real,
+            imaginary, bandEdges, bandWeights, bandPeaks, bandRows);
+    }
+
+    struct sig_tempo_OnsetDetector* tempo_OnsetDetector_new(
+        struct sig_Allocator* allocator, float sampleRate,
+        size_t windowLength, size_t hopLength, size_t diffLagHops,
+        float threshold) {
+        return sig_tempo_OnsetDetector_new(allocator, sampleRate,
+            windowLength, hopLength, diffLagHops, threshold);
+    }
+
+    float tempo_OnsetDetector_generate(
+        struct sig_tempo_OnsetDetector* onsetDetector, float sample) {
+        return sig_tempo_OnsetDetector_generate(onsetDetector, sample);
+    }
+
+    bool tempo_OnsetDetector_hasNewValue(
+        struct sig_tempo_OnsetDetector* onsetDetector) {
+        return sig_tempo_OnsetDetector_hasNewValue(onsetDetector);
+    }
+
+    void tempo_OnsetDetector_setThreshold(
+        struct sig_tempo_OnsetDetector* onsetDetector, float threshold) {
+        sig_tempo_OnsetDetector_setThreshold(onsetDetector, threshold);
+    }
+
+    void tempo_OnsetDetector_destroy(struct sig_Allocator* allocator,
+        struct sig_tempo_OnsetDetector* onsetDetector) {
+        sig_tempo_OnsetDetector_destroy(allocator, onsetDetector);
+    }
+
+    size_t tempo_calcWindowLength(float envelopeRate, float lowestTempo) {
+        return sig_tempo_calcWindowLength(envelopeRate, lowestTempo);
+    }
+
+    void tempo_TempoEstimator_init(
+        struct sig_tempo_TempoEstimator* tempoEstimator, float envelopeRate,
+        float lowestTempo, float highestTempo, float_array_ptr envelope,
+        float_array_ptr scores) {
+        sig_tempo_TempoEstimator_init(tempoEstimator, envelopeRate,
+            lowestTempo, highestTempo, envelope, scores);
+    }
+
+    struct sig_tempo_TempoEstimator* tempo_TempoEstimator_new(
+        struct sig_Allocator* allocator, float envelopeRate,
+        float lowestTempo, float highestTempo) {
+        return sig_tempo_TempoEstimator_new(allocator, envelopeRate,
+            lowestTempo, highestTempo);
+    }
+
+    void tempo_TempoEstimator_setTempoRange(
+        struct sig_tempo_TempoEstimator* tempoEstimator, float minTempo,
+        float maxTempo) {
+        sig_tempo_TempoEstimator_setTempoRange(tempoEstimator, minTempo,
+            maxTempo);
+    }
+
+    float tempo_TempoEstimator_generate(
+        struct sig_tempo_TempoEstimator* tempoEstimator, float value) {
+        return sig_tempo_TempoEstimator_generate(tempoEstimator, value);
+    }
+
+    void tempo_TempoEstimator_destroy(struct sig_Allocator* allocator,
+        struct sig_tempo_TempoEstimator* tempoEstimator) {
+        sig_tempo_TempoEstimator_destroy(allocator, tempoEstimator);
+    }
+
+    void tempo_BeatTracker_init(struct sig_tempo_BeatTracker* beatTracker,
+        float sampleRate, size_t hopLength, float latency,
+        float lowestTempo, float highestTempo, float_array_ptr envelope,
+        float_array_ptr scores, float_array_ptr predecessors,
+        float_array_ptr penalties) {
+        sig_tempo_BeatTracker_init(beatTracker, sampleRate, hopLength,
+            latency, lowestTempo, highestTempo, envelope, scores,
+            predecessors, penalties);
+    }
+
+    struct sig_tempo_BeatTracker* tempo_BeatTracker_new(
+        struct sig_Allocator* allocator, float sampleRate, size_t hopLength,
+        float latency, float lowestTempo, float highestTempo) {
+        return sig_tempo_BeatTracker_new(allocator, sampleRate, hopLength,
+            latency, lowestTempo, highestTempo);
+    }
+
+    void tempo_BeatTracker_analyse(struct sig_tempo_BeatTracker* beatTracker,
+        float value, float tempo) {
+        sig_tempo_BeatTracker_analyse(beatTracker, value, tempo);
+    }
+
+    void tempo_BeatTracker_tap(struct sig_tempo_BeatTracker* beatTracker) {
+        sig_tempo_BeatTracker_tap(beatTracker);
+    }
+
+    float tempo_BeatTracker_follow(struct sig_tempo_BeatTracker* beatTracker) {
+        return sig_tempo_BeatTracker_follow(beatTracker);
+    }
+
+    float tempo_BeatTracker_tempo(struct sig_tempo_BeatTracker* beatTracker) {
+        return sig_tempo_BeatTracker_tempo(beatTracker);
+    }
+
+    float tempo_BeatTracker_confidence(
+        struct sig_tempo_BeatTracker* beatTracker) {
+        return sig_tempo_BeatTracker_confidence(beatTracker);
+    }
+
+    enum sig_tempo_BeatTracker_State tempo_BeatTracker_state(
+        struct sig_tempo_BeatTracker* beatTracker) {
+        return sig_tempo_BeatTracker_state(beatTracker);
+    }
+
+    void tempo_BeatTracker_setResponsiveness(
+        struct sig_tempo_BeatTracker* beatTracker, float responsiveness) {
+        sig_tempo_BeatTracker_setResponsiveness(beatTracker, responsiveness);
+    }
+
+    void tempo_BeatTracker_setTempoRange(
+        struct sig_tempo_BeatTracker* beatTracker, float minTempo,
+        float maxTempo) {
+        sig_tempo_BeatTracker_setTempoRange(beatTracker, minTempo, maxTempo);
+    }
+
+    void tempo_BeatTracker_setSilenceTimeout(
+        struct sig_tempo_BeatTracker* beatTracker, float silenceTimeout) {
+        sig_tempo_BeatTracker_setSilenceTimeout(beatTracker, silenceTimeout);
+    }
+
+    void tempo_BeatTracker_destroy(struct sig_Allocator* allocator,
+        struct sig_tempo_BeatTracker* beatTracker) {
+        sig_tempo_BeatTracker_destroy(allocator, beatTracker);
+    }
+
+    void tempo_ClockGenerator_init(
+        struct sig_tempo_ClockGenerator* clockGenerator, float sampleRate) {
+        sig_tempo_ClockGenerator_init(clockGenerator, sampleRate);
+    }
+
+    void tempo_ClockGenerator_setLead(
+        struct sig_tempo_ClockGenerator* clockGenerator, float lead) {
+        sig_tempo_ClockGenerator_setLead(clockGenerator, lead);
+    }
+
+    void tempo_ClockGenerator_setTriggerDuration(
+        struct sig_tempo_ClockGenerator* clockGenerator,
+        float triggerDuration) {
+        sig_tempo_ClockGenerator_setTriggerDuration(clockGenerator,
+            triggerDuration);
+    }
+
+    void tempo_ClockGenerator_setSilenceBehaviour(
+        struct sig_tempo_ClockGenerator* clockGenerator,
+        float silenceBehaviour) {
+        sig_tempo_ClockGenerator_setSilenceBehaviour(clockGenerator,
+            silenceBehaviour);
+    }
+
+    void tempo_ClockGenerator_generate(
+        struct sig_tempo_ClockGenerator* clockGenerator, float phase,
+        float tempo, float confidence, enum sig_tempo_BeatTracker_State state,
+        struct sig_tempo_ClockGenerator_Outputs* outputs) {
+        sig_tempo_ClockGenerator_generate(clockGenerator, phase, tempo,
+            confidence, state, outputs);
     }
 
     float linearXFade(float left, float right, float mix) {

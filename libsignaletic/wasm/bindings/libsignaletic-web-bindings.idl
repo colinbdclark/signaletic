@@ -126,6 +126,24 @@ interface sig_osc_AdditiveWavetableBank {
     attribute float level;
 };
 
+interface sig_osc_RatioPhasor {
+    attribute float phase;
+    attribute float previousReference;
+    attribute unsigned long cycle;
+    attribute float correction;
+    attribute float maxIncrement;
+};
+
+interface sig_osc_ClockPhasor {
+    attribute float phase;
+    attribute float increment;
+    attribute float correction;
+    attribute unsigned long correctionSamples;
+    attribute unsigned long samplesSinceLastPulse;
+    attribute boolean hasPulsed;
+    attribute float previousPulse;
+};
+
 interface sig_osc_FastLFSine {
     attribute float sampleRate;
     attribute float f;
@@ -147,6 +165,12 @@ interface sig_Buffer {
 };
 
 
+interface sig_FFT {
+    attribute unsigned long length;
+    attribute any cosines;
+    attribute any sines;
+};
+
 interface sig_WavetableBank {
     attribute unsigned long length;
 };
@@ -166,6 +190,43 @@ interface sig_AdditiveWavetableBank {
 interface sig_DelayLine {
     attribute sig_Buffer buffer;
     attribute unsigned long writeIdx;
+};
+
+// The tempo stages' buffers are not exposed as attributes because the
+// WebIDL binder cannot marshal pointer members or fixed C array members.
+interface sig_tempo_OnsetDetector {
+};
+
+interface sig_tempo_TempoEstimator {
+};
+
+enum sig_tempo_BeatTracker_State {
+    "sig_tempo_BeatTracker_State_WAITING",
+    "sig_tempo_BeatTracker_State_SEARCHING",
+    "sig_tempo_BeatTracker_State_TRACKING",
+    "sig_tempo_BeatTracker_State_SILENT"
+};
+
+interface sig_tempo_BeatTracker {
+};
+
+interface sig_tempo_ClockGenerator_Outputs {
+    attribute float clock;
+    attribute float phase;
+    attribute float bpm;
+    attribute float confidence;
+};
+
+interface sig_tempo_ClockGenerator {
+    attribute float sampleRate;
+    attribute float lead;
+    attribute float triggerDuration;
+    attribute float silenceBehaviour;
+    attribute unsigned long triggerSamples;
+    attribute unsigned long triggerSamplesRemaining;
+    attribute float previousPhase;
+    attribute boolean wasActive;
+    attribute boolean isArmed;
 };
 
 interface sig_dsp_Signal {
@@ -220,6 +281,17 @@ interface sig_dsp_Clamp {
     [Value] attribute sig_dsp_Signal signal;
     [Value] attribute sig_dsp_Signal_SingleSourceInput inputs;
     [Value] attribute sig_dsp_Clamp_Parameters parameters;
+    [Value] attribute sig_dsp_Signal_SingleMonoOutput outputs;
+};
+
+interface sig_dsp_SnapToInteger_Parameters {
+    attribute float tolerance;
+};
+
+interface sig_dsp_SnapToInteger {
+    [Value] attribute sig_dsp_Signal signal;
+    [Value] attribute sig_dsp_Signal_SingleSourceInput inputs;
+    [Value] attribute sig_dsp_SnapToInteger_Parameters parameters;
     [Value] attribute sig_dsp_Signal_SingleMonoOutput outputs;
 };
 
@@ -374,6 +446,100 @@ interface sig_dsp_AdditiveWavetableBankOscillator {
     [Value] attribute sig_dsp_WavetableBankOscillator_Inputs inputs;
     [Value] attribute sig_dsp_Oscillator_Outputs outputs;
     [Value] attribute sig_osc_AdditiveWavetableBank state;
+    attribute sig_AdditiveWavetableBank wavetables;
+};
+
+interface sig_dsp_Phasor_Inputs {
+    attribute any frequency;
+};
+
+interface sig_dsp_Phasor {
+    [Value] attribute sig_dsp_Signal signal;
+    [Value] attribute sig_dsp_Phasor_Inputs inputs;
+    [Value] attribute sig_dsp_Signal_SingleMonoOutput outputs;
+    [Value] attribute sig_osc_Oscillator state;
+};
+
+interface sig_dsp_RatioPhasor_Inputs {
+    attribute any reference;
+    attribute any numerator;
+    attribute any denominator;
+    attribute any octaves;
+};
+
+interface sig_dsp_RatioPhasor_Parameters {
+    attribute float glide;
+    attribute float maxFrequency;
+};
+
+interface sig_dsp_RatioPhasor {
+    [Value] attribute sig_dsp_Signal signal;
+    [Value] attribute sig_dsp_RatioPhasor_Inputs inputs;
+    [Value] attribute sig_dsp_RatioPhasor_Parameters parameters;
+    [Value] attribute sig_dsp_Signal_SingleMonoOutput outputs;
+    [Value] attribute sig_osc_RatioPhasor state;
+    attribute float previousGlide;
+    attribute float previousMaxFrequency;
+};
+
+interface sig_dsp_WavetableReader_Inputs {
+    attribute any phase;
+    attribute any phaseOffset;
+    attribute any mul;
+    attribute any add;
+};
+
+interface sig_dsp_WavetableReader {
+    [Value] attribute sig_dsp_Signal signal;
+    [Value] attribute sig_dsp_WavetableReader_Inputs inputs;
+    [Value] attribute sig_dsp_Signal_SingleMonoOutput outputs;
+    attribute sig_Buffer wavetable;
+};
+
+interface sig_dsp_WavetableBankReader_Inputs {
+    attribute any phase;
+    attribute any phaseOffset;
+    attribute any tableIndex;
+    attribute any mul;
+    attribute any add;
+};
+
+interface sig_dsp_WavetableBankReader {
+    [Value] attribute sig_dsp_Signal signal;
+    [Value] attribute sig_dsp_WavetableBankReader_Inputs inputs;
+    [Value] attribute sig_dsp_Signal_SingleMonoOutput outputs;
+    attribute sig_WavetableBank wavetables;
+};
+
+interface sig_dsp_AdditiveWavetableBankReader_Inputs {
+    attribute any phase;
+    attribute any phaseOffset;
+    attribute any frequency;
+    attribute any tableIndex;
+    attribute any mul;
+    attribute any add;
+};
+
+interface sig_osc_PeakFrequency {
+    attribute float previousPhase;
+    attribute boolean hasPreviousPhase;
+    attribute float peak;
+    attribute float release;
+};
+
+interface sig_dsp_AdditiveWavetableBankReader_Parameters {
+    attribute float peakRelease;
+};
+
+interface sig_dsp_AdditiveWavetableBankReader {
+    [Value] attribute sig_dsp_Signal signal;
+    [Value] attribute sig_dsp_AdditiveWavetableBankReader_Inputs inputs;
+    [Value] attribute sig_dsp_AdditiveWavetableBankReader_Parameters parameters;
+    [Value] attribute sig_dsp_Signal_SingleMonoOutput outputs;
+    [Value] attribute sig_osc_AdditiveWavetableBank state;
+    [Value] attribute sig_osc_PeakFrequency peakFrequency;
+    attribute float previousPeakRelease;
+    attribute float levelFrequency;
     attribute sig_AdditiveWavetableBank wavetables;
 };
 
@@ -554,6 +720,57 @@ interface sig_dsp_ClockSource {
     attribute unsigned long latchedTapSamplesRemaining;
 };
 
+
+interface sig_dsp_ClockPhasor_Inputs {
+    attribute any pulse;
+};
+
+interface sig_dsp_ClockPhasor {
+    [Value] attribute sig_dsp_Signal signal;
+    [Value] attribute sig_dsp_ClockPhasor_Inputs inputs;
+    [Value] attribute sig_dsp_Clock_Parameters parameters;
+    [Value] attribute sig_dsp_Signal_SingleMonoOutput outputs;
+    [Value] attribute sig_osc_ClockPhasor state;
+};
+
+interface sig_dsp_TempoDetector_Inputs {
+    attribute any source;
+    attribute any sync;
+};
+
+interface sig_dsp_TempoDetector_Parameters {
+    attribute float threshold;
+    attribute float minTempo;
+    attribute float maxTempo;
+    attribute float responsiveness;
+    attribute float lead;
+    attribute float triggerDuration;
+    attribute float silenceBehaviour;
+    attribute float silenceTimeout;
+};
+
+interface sig_dsp_TempoDetector_Outputs {
+    attribute any clock;
+    attribute any phase;
+    attribute any bpm;
+    attribute any confidence;
+};
+
+interface sig_dsp_TempoDetector {
+    [Value] attribute sig_dsp_Signal signal;
+    [Value] attribute sig_dsp_TempoDetector_Inputs inputs;
+    [Value] attribute sig_dsp_TempoDetector_Parameters parameters;
+    [Value] attribute sig_dsp_TempoDetector_Outputs outputs;
+    attribute unsigned long windowLength;
+    attribute unsigned long hopLength;
+    attribute float latency;
+    attribute sig_tempo_OnsetDetector onsetDetector;
+    attribute sig_tempo_TempoEstimator tempoEstimator;
+    attribute sig_tempo_BeatTracker beatTracker;
+    [Value] attribute sig_tempo_ClockGenerator clockGenerator;
+    attribute float tempoEstimate;
+    attribute float previousSync;
+};
 
 interface sig_dsp_ClockDetector_Inputs {
     attribute any source;
@@ -986,6 +1203,14 @@ interface Signals {
     void Clamp_generate(any signal);
     void Clamp_destroy(sig_Allocator allocator, sig_dsp_Clamp signal);
 
+    sig_dsp_SnapToInteger SnapToInteger_new(sig_Allocator allocator,
+        sig_SignalContext context);
+    void SnapToInteger_init(sig_dsp_SnapToInteger signal,
+        sig_SignalContext context);
+    void SnapToInteger_generate(any signal);
+    void SnapToInteger_destroy(sig_Allocator allocator,
+        sig_dsp_SnapToInteger signal);
+
     sig_dsp_ScaleOffset ScaleOffset_new(sig_Allocator allocator,
         sig_SignalContext context);
     void ScaleOffset_init(sig_dsp_ScaleOffset signal, sig_SignalContext context);
@@ -1102,6 +1327,45 @@ interface Signals {
     void AdditiveWavetableBankOscillator_destroy(sig_Allocator allocator,
         sig_dsp_AdditiveWavetableBankOscillator signal);
 
+    void Phasor_init(sig_dsp_Phasor signal, sig_SignalContext context);
+    sig_dsp_Phasor Phasor_new(sig_Allocator allocator,
+        sig_SignalContext context);
+    void Phasor_generate(any signal);
+    void Phasor_destroy(sig_Allocator allocator, sig_dsp_Phasor signal);
+
+    void RatioPhasor_init(sig_dsp_RatioPhasor signal,
+        sig_SignalContext context);
+    sig_dsp_RatioPhasor RatioPhasor_new(sig_Allocator allocator,
+        sig_SignalContext context);
+    void RatioPhasor_generate(any signal);
+    void RatioPhasor_destroy(sig_Allocator allocator,
+        sig_dsp_RatioPhasor signal);
+
+    void WavetableReader_init(sig_dsp_WavetableReader signal,
+        sig_SignalContext context);
+    sig_dsp_WavetableReader WavetableReader_new(sig_Allocator allocator,
+        sig_SignalContext context);
+    void WavetableReader_generate(any signal);
+    void WavetableReader_destroy(sig_Allocator allocator,
+        sig_dsp_WavetableReader signal);
+
+    void WavetableBankReader_init(sig_dsp_WavetableBankReader signal,
+        sig_SignalContext context);
+    sig_dsp_WavetableBankReader WavetableBankReader_new(
+        sig_Allocator allocator, sig_SignalContext context);
+    void WavetableBankReader_generate(any signal);
+    void WavetableBankReader_destroy(sig_Allocator allocator,
+        sig_dsp_WavetableBankReader signal);
+
+    void AdditiveWavetableBankReader_init(
+        sig_dsp_AdditiveWavetableBankReader signal,
+        sig_SignalContext context);
+    sig_dsp_AdditiveWavetableBankReader AdditiveWavetableBankReader_new(
+        sig_Allocator allocator, sig_SignalContext context);
+    void AdditiveWavetableBankReader_generate(any signal);
+    void AdditiveWavetableBankReader_destroy(sig_Allocator allocator,
+        sig_dsp_AdditiveWavetableBankReader signal);
+
     void FastLFSineOscillator_init(sig_dsp_FastLFSineOscillator signal,
         sig_SignalContext context);
     sig_dsp_FastLFSineOscillator FastLFSineOscillator_new(
@@ -1174,6 +1438,29 @@ interface Signals {
     void ClockDetector_generate(any signal);
     void ClockDetector_destroy(sig_Allocator allocator,
         sig_dsp_ClockDetector signal);
+
+    void ClockPhasor_init(sig_dsp_ClockPhasor signal,
+        sig_SignalContext context);
+    sig_dsp_ClockPhasor ClockPhasor_new(sig_Allocator allocator,
+        sig_SignalContext context);
+    void ClockPhasor_generate(any signal);
+    void ClockPhasor_destroy(sig_Allocator allocator,
+        sig_dsp_ClockPhasor signal);
+
+    unsigned long TempoDetector_calcWindowLength(float sampleRate);
+    unsigned long TempoDetector_calcHopLength(float sampleRate);
+    void TempoDetector_Outputs_newAudioBlocks(sig_Allocator allocator,
+        sig_AudioSettings audioSettings,
+        sig_dsp_TempoDetector_Outputs outputs);
+    void TempoDetector_Outputs_destroyAudioBlocks(sig_Allocator allocator,
+        sig_dsp_TempoDetector_Outputs outputs);
+    void TempoDetector_init(sig_dsp_TempoDetector signal,
+        sig_SignalContext context);
+    sig_dsp_TempoDetector TempoDetector_new(sig_Allocator allocator,
+        sig_SignalContext context);
+    void TempoDetector_generate(any signal);
+    void TempoDetector_destroy(sig_Allocator allocator,
+        sig_dsp_TempoDetector signal);
 
     sig_dsp_LinearToFreq LinearToFreq_new(sig_Allocator allocator,
         sig_SignalContext context);
@@ -1365,6 +1652,7 @@ interface Signaletic {
     float fminf(float a, float b);
     float fmaxf(float a, float b);
     float clamp(float value, float min, float max);
+    float snapToInteger(float value, float tolerance);
     float flooredfmodf(float num, float denom);
     float fastMod1f(float x);
     float randf();
@@ -1464,11 +1752,19 @@ interface Signaletic {
     float waveform_sawHarmonicGain(unsigned long harmonic);
     float waveform_squareHarmonicGain(unsigned long harmonic);
     float waveform_reverseSawHarmonicGain(unsigned long harmonic);
+    float waveform_sinePhaseTriangle(float phase);
+    float waveform_sinePhaseSaw(float phase);
+    float waveform_sinePhaseTriangleHarmonicGain(unsigned long harmonic);
+    float waveform_sinePhaseSawHarmonicGain(unsigned long harmonic);
 
     // Returns a pointer to the entry for one standard waveform. The entry
     // for index 0 is also the start of the whole array, so it can be passed
     // to AdditiveWavetableBank_new with sig_StandardWaveform_COUNT shapes.
     [Const] sig_WaveformShape STANDARD_WAVEFORMS(unsigned long index);
+
+    // Returns a pointer to the entry for one sine-phase waveform, in the
+    // same way as STANDARD_WAVEFORMS.
+    [Const] sig_WaveformShape SINE_PHASE_WAVEFORMS(unsigned long index);
 
     float waveform_harmonicGain(sig_StandardWaveform waveform,
         unsigned long harmonic);
@@ -1501,6 +1797,27 @@ interface Signaletic {
     float osc_AdditiveWavetableBank_generate(
         sig_osc_AdditiveWavetableBank oscillator, float frequency,
         float phaseOffset, float tableIndex, float sampleRate, any eocOut);
+    float osc_AdditiveWavetableBank_readAtPhase(
+        sig_osc_AdditiveWavetableBank oscillator, float frequency,
+        float phase, float tableIndex);
+
+    void osc_RatioPhasor_init(sig_osc_RatioPhasor phasor);
+    void osc_RatioPhasor_calculateCoefficient(sig_osc_RatioPhasor phasor,
+        float glide, float sampleRate);
+    void osc_RatioPhasor_setMaxFrequency(sig_osc_RatioPhasor phasor,
+        float maxFrequency, float sampleRate);
+    float osc_RatioPhasor_generate(sig_osc_RatioPhasor phasor,
+        float reference, float numerator, float denominator, float octaves);
+
+    void osc_ClockPhasor_init(sig_osc_ClockPhasor phasor);
+    float osc_ClockPhasor_generate(sig_osc_ClockPhasor phasor,
+        float pulse, float threshold);
+
+    void osc_PeakFrequency_init(sig_osc_PeakFrequency follower);
+    void osc_PeakFrequency_calculateCoefficient(
+        sig_osc_PeakFrequency follower, float release, float sampleRate);
+    float osc_PeakFrequency_generate(sig_osc_PeakFrequency follower,
+        float phase, float sampleRate);
 
     void osc_FastLFSine_init(sig_osc_FastLFSine signal, float sampleRate);
     void osc_FastLFSine_setFrequency(sig_osc_FastLFSine signal,
@@ -1549,9 +1866,16 @@ interface Signaletic {
     float Buffer_readLinearAtPhase(sig_Buffer buffer, float phase);
     void Buffer_addHarmonic(sig_Buffer buffer, sig_Buffer sineTable,
         unsigned long harmonic, float gain, float phase);
-    void Buffer_fillWithHarmonics(sig_Buffer buffer, sig_Buffer sineTable,
-        sig_WaveformShape shape, unsigned long numHarmonics,
+    void Buffer_fillWithHarmonics(sig_Buffer buffer, sig_FFT fft,
+        any imaginary, sig_WaveformShape shape, unsigned long numHarmonics,
         sig_HarmonicTaper taper);
+
+    void FFT_init(sig_FFT fft, unsigned long length, any cosines,
+        any sines);
+    sig_FFT FFT_new(sig_Allocator allocator, unsigned long length);
+    void FFT_forward(sig_FFT fft, any real, any imaginary);
+    void FFT_inverse(sig_FFT fft, any real, any imaginary);
+    void FFT_destroy(sig_Allocator allocator, sig_FFT fft);
     void Buffer_destroy(sig_Allocator allocator, sig_Buffer buffer);
 
     sig_Buffer BufferView_new(sig_Allocator allocator, sig_Buffer buffer,
@@ -1573,7 +1897,7 @@ interface Signaletic {
     unsigned long AdditiveWavetableBank_numHarmonics(
         sig_AdditiveWavetableBank wavetables, unsigned long level);
     void AdditiveWavetableBank_fill(sig_AdditiveWavetableBank wavetables,
-        sig_Buffer sineTable);
+        sig_FFT fft, any imaginary);
     float AdditiveWavetableBank_levelForFrequency(
         sig_AdditiveWavetableBank wavetables, float frequency);
     float AdditiveWavetableBank_readLinearAtPhase(
@@ -1582,6 +1906,7 @@ interface Signaletic {
     void AdditiveWavetableBank_destroy(sig_Allocator allocator,
         sig_AdditiveWavetableBank wavetables);
 
+    any samples_new(sig_Allocator allocator, unsigned long length);
     any AudioBlock_new(sig_Allocator allocator,
         sig_AudioSettings audioSettings);
     any AudioBlock_newWithValue(sig_Allocator allocator,
@@ -1635,6 +1960,80 @@ interface Signaletic {
     float DelayLine_cubicAllpass(sig_DelayLine delayLine, float sample,
         float readPos, float g);
     void DelayLine_destroy(sig_Allocator allocator, sig_DelayLine delayLine);
+
+    unsigned long tempo_OnsetDetector_calcNumBands(float sampleRate,
+        unsigned long windowLength);
+    void tempo_OnsetDetector_init(sig_tempo_OnsetDetector onsetDetector,
+        float sampleRate, unsigned long windowLength,
+        unsigned long hopLength, unsigned long diffLagHops,
+        float threshold, sig_FFT fft, any window, any frame, any real,
+        any imaginary, any bandEdges, any bandWeights, any bandPeaks,
+        any bandRows);
+    sig_tempo_OnsetDetector tempo_OnsetDetector_new(sig_Allocator allocator,
+        float sampleRate, unsigned long windowLength,
+        unsigned long hopLength, unsigned long diffLagHops,
+        float threshold);
+    float tempo_OnsetDetector_generate(
+        sig_tempo_OnsetDetector onsetDetector, float sample);
+    boolean tempo_OnsetDetector_hasNewValue(
+        sig_tempo_OnsetDetector onsetDetector);
+    void tempo_OnsetDetector_setThreshold(
+        sig_tempo_OnsetDetector onsetDetector, float threshold);
+    void tempo_OnsetDetector_destroy(sig_Allocator allocator,
+        sig_tempo_OnsetDetector onsetDetector);
+
+    unsigned long tempo_calcWindowLength(float envelopeRate,
+        float lowestTempo);
+    void tempo_TempoEstimator_init(sig_tempo_TempoEstimator tempoEstimator,
+        float envelopeRate, float lowestTempo, float highestTempo,
+        any envelope, any scores);
+    sig_tempo_TempoEstimator tempo_TempoEstimator_new(
+        sig_Allocator allocator, float envelopeRate, float lowestTempo,
+        float highestTempo);
+    void tempo_TempoEstimator_setTempoRange(
+        sig_tempo_TempoEstimator tempoEstimator, float minTempo,
+        float maxTempo);
+    float tempo_TempoEstimator_generate(
+        sig_tempo_TempoEstimator tempoEstimator, float value);
+    void tempo_TempoEstimator_destroy(sig_Allocator allocator,
+        sig_tempo_TempoEstimator tempoEstimator);
+
+    void tempo_BeatTracker_init(sig_tempo_BeatTracker beatTracker,
+        float sampleRate, unsigned long hopLength, float latency,
+        float lowestTempo, float highestTempo, any envelope, any scores,
+        any predecessors, any penalties);
+    sig_tempo_BeatTracker tempo_BeatTracker_new(sig_Allocator allocator,
+        float sampleRate, unsigned long hopLength, float latency,
+        float lowestTempo, float highestTempo);
+    void tempo_BeatTracker_analyse(sig_tempo_BeatTracker beatTracker,
+        float value, float tempo);
+    void tempo_BeatTracker_tap(sig_tempo_BeatTracker beatTracker);
+    float tempo_BeatTracker_follow(sig_tempo_BeatTracker beatTracker);
+    float tempo_BeatTracker_tempo(sig_tempo_BeatTracker beatTracker);
+    float tempo_BeatTracker_confidence(sig_tempo_BeatTracker beatTracker);
+    sig_tempo_BeatTracker_State tempo_BeatTracker_state(
+        sig_tempo_BeatTracker beatTracker);
+    void tempo_BeatTracker_setResponsiveness(
+        sig_tempo_BeatTracker beatTracker, float responsiveness);
+    void tempo_BeatTracker_setTempoRange(sig_tempo_BeatTracker beatTracker,
+        float minTempo, float maxTempo);
+    void tempo_BeatTracker_setSilenceTimeout(
+        sig_tempo_BeatTracker beatTracker, float silenceTimeout);
+    void tempo_BeatTracker_destroy(sig_Allocator allocator,
+        sig_tempo_BeatTracker beatTracker);
+
+    void tempo_ClockGenerator_init(sig_tempo_ClockGenerator clockGenerator,
+        float sampleRate);
+    void tempo_ClockGenerator_setLead(
+        sig_tempo_ClockGenerator clockGenerator, float lead);
+    void tempo_ClockGenerator_setTriggerDuration(
+        sig_tempo_ClockGenerator clockGenerator, float triggerDuration);
+    void tempo_ClockGenerator_setSilenceBehaviour(
+        sig_tempo_ClockGenerator clockGenerator, float silenceBehaviour);
+    void tempo_ClockGenerator_generate(
+        sig_tempo_ClockGenerator clockGenerator, float phase, float tempo,
+        float confidence, sig_tempo_BeatTracker_State state,
+        sig_tempo_ClockGenerator_Outputs outputs);
 
     float linearXFade(float left, float right, float mix);
     float sineWavefolder(float x, float gain, float factor);

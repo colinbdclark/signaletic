@@ -2,6 +2,11 @@
 
 #include <libsignaletic.h>
 #include "daisy.h"
+#include "stm32h7xx_hal.h"
+// hal_map.h declares C functions without C linkage guards.
+extern "C" {
+#include "util/hal_map.h"
+}
 #include "signaletic-host.h"
 
 namespace sig {
@@ -299,6 +304,286 @@ class GateInput {
 
         inline float Value() {
             return !gpioSource.Value();
+        }
+};
+
+class EdgeTimedGateInput;
+
+/**
+ * @brief The edge-timed gate inputs that handle each pin interrupt line,
+ * indexed by pin number.
+ *
+ */
+extern EdgeTimedGateInput* edgeTimedGateInputs[16];
+
+/**
+ * @brief A gate input that places each of its edges on the sample at which
+ * the edge occurred.
+ *
+ * A gate input that is read once per block can only detect an edge at the
+ * start of the following block, which makes the timing of clock pulses
+ * jitter by up to a block. Instead, a pin interrupt records the time of each
+ * edge, and Read() places each edge on the matching sample of the next
+ * block. The gate is delayed by one block, without jitter.
+ *
+ * The pin interrupt has to be able to interrupt the audio callback, so
+ * Init() lowers the priority of the audio DMA interrupts below it.
+ *
+ * Slow or noisy edges can switch the pin several times in quick
+ * succession. The gate ignores any transition that occurs within the
+ * holdoff time of the previous one.
+ */
+class EdgeTimedGateInput {
+    public:
+        /**
+         * @brief The largest block size, in samples.
+         *
+         */
+        static const size_t MAX_BLOCK_SIZE = 256;
+
+        /**
+         * @brief The number of edges that can be recorded between reads.
+         *
+         */
+        static const size_t MAX_EDGES = 64;
+
+        /**
+         * @brief The gate's samples for the most recently read block.
+         *
+         * 1.0 while the gate is high, and 0.0 while it is low.
+         */
+        float samples[MAX_BLOCK_SIZE] = {0.0f};
+
+        /**
+         * @brief The gate's value at the end of the most recently read block.
+         *
+         */
+        float state = 0.0f;
+
+        /**
+         * @brief Initialises the gate's pin and its interrupt.
+         *
+         * @param inPin the gate's pin, which is inverted, as on the
+         * Patch SM's gate inputs
+         * @param holdoff the time after each transition during which the
+         * gate ignores further transitions, in seconds
+         */
+        void Init(dsy_gpio_pin inPin, float holdoff = 0.0005f) {
+            gpio.pin = inPin;
+            gpio.mode = DSY_GPIO_MODE_INPUT;
+            gpio.pull = DSY_GPIO_PULLUP;
+            dsy_gpio_init(&gpio);
+
+            holdoffTicks = (uint32_t) (holdoff *
+                (float) daisy::System::GetTickFreq());
+            edgeTimedGateInputs[inPin.pin] = this;
+
+            __HAL_RCC_SYSCFG_CLK_ENABLE();
+            GPIO_InitTypeDef init = {};
+            init.Pin = dsy_hal_map_get_pin(&gpio.pin);
+            init.Mode = GPIO_MODE_IT_RISING_FALLING;
+            init.Pull = GPIO_PULLUP;
+            init.Speed = GPIO_SPEED_FREQ_LOW;
+            HAL_GPIO_Init(dsy_hal_map_get_port(&gpio.pin), &init);
+
+            LowerAudioInterruptPriority();
+            IRQn_Type irq = InterruptForLine(inPin.pin);
+            HAL_NVIC_SetPriority(irq, 0, 0);
+            HAL_NVIC_EnableIRQ(irq);
+        }
+
+        /**
+         * @brief Records the time and level of an edge.
+         *
+         * Called from the pin's interrupt handler.
+         */
+        inline void OnEdge() {
+            uint32_t tick = daisy::System::GetTick();
+            uint32_t index = writeIndex;
+            edgeTicks[index % MAX_EDGES] = tick;
+            // The gate input is inverted, so a low pin is a high gate.
+            edgeIsHigh[index % MAX_EDGES] = !dsy_gpio_read(&gpio);
+            writeIndex = index + 1;
+        }
+
+        /**
+         * @brief Fills the gate's samples for the next block from the edges
+         * that occurred during the previous block.
+         *
+         * Called at the start of each audio callback.
+         *
+         * @param blockSize the number of samples in the block, up to
+         * MAX_BLOCK_SIZE
+         */
+        void Read(size_t blockSize) {
+            if (blockSize > MAX_BLOCK_SIZE) {
+                blockSize = MAX_BLOCK_SIZE;
+            }
+
+            bool isPinHigh = !dsy_gpio_read(&gpio);
+            uint32_t now = daisy::System::GetTick();
+
+            if (!hasPreviousBlockTick) {
+                previousBlockTick = now;
+                hasPreviousBlockTick = true;
+                readIndex = writeIndex;
+                SetState(isPinHigh, now);
+                FillSamples(0, blockSize);
+                return;
+            }
+
+            uint32_t blockTicks = now - previousBlockTick;
+            uint32_t endIndex = writeIndex;
+            if (endIndex - readIndex > MAX_EDGES) {
+                readIndex = endIndex - MAX_EDGES;
+            }
+
+            size_t position = 0;
+            while (readIndex != endIndex) {
+                uint32_t tick = edgeTicks[readIndex % MAX_EDGES];
+                uint32_t ticksIntoBlock = tick - previousBlockTick;
+                // Edges that occurred after the start of this callback
+                // belong to the next block.
+                if (ticksIntoBlock > blockTicks) {
+                    break;
+                }
+
+                bool isHigh = edgeIsHigh[readIndex % MAX_EDGES];
+                readIndex++;
+                if (tick - lastTransitionTick < holdoffTicks ||
+                    isHigh == (state > 0.0f)) {
+                    continue;
+                }
+
+                size_t edgePosition = SampleForTick(ticksIntoBlock,
+                    blockTicks, blockSize);
+                FillSamples(position, edgePosition);
+                position = edgePosition;
+                SetState(isHigh, tick);
+            }
+
+            FillSamples(position, blockSize);
+
+            // A transition ignored during the holdoff leaves the gate in the
+            // wrong state, so it switches at the end of the block instead.
+            if (isPinHigh != (state > 0.0f) &&
+                now - lastTransitionTick >= holdoffTicks) {
+                SetState(isPinHigh, now);
+                samples[blockSize - 1] = state;
+            }
+
+            previousBlockTick = now;
+        }
+
+        /**
+         * @brief Lowers the priority of libDaisy's audio DMA interrupts,
+         * so that pin interrupts can interrupt the audio callback.
+         *
+         */
+        static void LowerAudioInterruptPriority() {
+            HAL_NVIC_SetPriority(DMA1_Stream0_IRQn, 1, 0);
+            HAL_NVIC_SetPriority(DMA1_Stream1_IRQn, 1, 0);
+            HAL_NVIC_SetPriority(DMA1_Stream3_IRQn, 1, 0);
+            HAL_NVIC_SetPriority(DMA1_Stream4_IRQn, 1, 0);
+        }
+
+        /**
+         * @brief Returns the interrupt that handles a pin interrupt line.
+         *
+         * @param line the pin interrupt line, which is the pin's number
+         * @return the interrupt
+         */
+        static IRQn_Type InterruptForLine(uint8_t line) {
+            static const IRQn_Type LOW_LINE_INTERRUPTS[5] = {
+                EXTI0_IRQn, EXTI1_IRQn, EXTI2_IRQn, EXTI3_IRQn, EXTI4_IRQn
+            };
+
+            if (line < 5) {
+                return LOW_LINE_INTERRUPTS[line];
+            }
+
+            return line < 10 ? EXTI9_5_IRQn : EXTI15_10_IRQn;
+        }
+
+    private:
+        /**
+         * @brief The gate's pin.
+         *
+         */
+        dsy_gpio gpio;
+
+        /**
+         * @brief The holdoff time, in system ticks.
+         *
+         */
+        uint32_t holdoffTicks = 0;
+
+        /**
+         * @brief The time of the gate's most recent transition, in system
+         * ticks.
+         *
+         */
+        uint32_t lastTransitionTick = 0;
+
+        /**
+         * @brief The time at which the previous block was read, in system
+         * ticks.
+         *
+         */
+        uint32_t previousBlockTick = 0;
+
+        /**
+         * @brief Whether a block has been read yet.
+         *
+         */
+        bool hasPreviousBlockTick = false;
+
+        /**
+         * @brief The time of each recorded edge, in system ticks.
+         *
+         * A ring buffer, written by the interrupt handler.
+         */
+        volatile uint32_t edgeTicks[MAX_EDGES] = {0};
+
+        /**
+         * @brief Whether the gate was high after each recorded edge.
+         *
+         */
+        volatile bool edgeIsHigh[MAX_EDGES] = {false};
+
+        /**
+         * @brief The number of edges recorded by the interrupt handler.
+         *
+         */
+        volatile uint32_t writeIndex = 0;
+
+        /**
+         * @brief The number of recorded edges that Read() has processed.
+         *
+         */
+        uint32_t readIndex = 0;
+
+        inline void SetState(bool isHigh, uint32_t tick) {
+            state = isHigh ? 1.0f : 0.0f;
+            lastTransitionTick = tick;
+        }
+
+        inline void FillSamples(size_t start, size_t end) {
+            for (size_t i = start; i < end; i++) {
+                samples[i] = state;
+            }
+        }
+
+        static inline size_t SampleForTick(uint32_t ticksIntoBlock,
+            uint32_t blockTicks, size_t blockSize) {
+            if (blockTicks == 0) {
+                return 0;
+            }
+
+            size_t sample = (size_t) (((uint64_t) ticksIntoBlock *
+                (uint64_t) blockSize) / (uint64_t) blockTicks);
+
+            return sample < blockSize ? sample : blockSize - 1;
         }
 };
 

@@ -46,6 +46,16 @@ struct sig_host_HardwareInterface {
     size_t numGateInputs;
     float* gateInputs;
 
+    /**
+     * @brief A block of samples for each gate input, which places each of
+     * the gate's edges on the sample at which it occurred.
+     *
+     * NULL if the device only provides one value per block for its gates,
+     * in gateInputs. A device that provides blocks may still set an
+     * individual gate's block to NULL.
+     */
+    float** gateInputBlocks;
+
     size_t numGPIOOutputs;
     float* gpioOutputs;
 

@@ -100,6 +100,22 @@ inline float sig_fmaxf(float a, float b);
 inline float sig_clamp(float value, float min, float max);
 
 /**
+ * @brief Rounds a value to the nearest whole number if it is within a
+ * tolerance of it, and otherwise returns the value unchanged.
+ *
+ * Snapping holds a control at exact whole-number values despite noise,
+ * while leaving it continuous elsewhere. For example, snapping a pitch in
+ * octaves holds it at exact octaves. To snap to another step size, such
+ * as semitones, scale the value so that each step is 1.0 before snapping.
+ *
+ * @param value the value to snap
+ * @param tolerance the largest distance from a whole number at which the
+ * value snaps to it
+ * @return the nearest whole number, or the value
+ */
+inline float sig_snapToInteger(float value, float tolerance);
+
+/**
  * @brief Computes the fractional part of a value,
  * wrapped to the range 0.0-1.0.
  * This is useful as a faster alternative to sig_flooredfmodf
@@ -830,6 +846,32 @@ float sig_waveform_reverseSaw(float phase);
 float sig_waveform_triangle(float phase);
 
 /**
+ * @brief Generates one sample of a triangle wave whose fundamental is in
+ * phase with a sine.
+ *
+ * Like sig_waveform_sine, the triangle starts at zero and rises, peaking a
+ * quarter of the way through the cycle. It is sig_waveform_triangle delayed
+ * by a quarter cycle.
+ *
+ * @param phase the current phase of the waveform, in radians from 0 to 2pi
+ * @return the generated sample
+ */
+float sig_waveform_sinePhaseTriangle(float phase);
+
+/**
+ * @brief Generates one sample of a saw wave whose fundamental is in phase
+ * with a sine.
+ *
+ * Like sig_waveform_sine, the saw starts at zero and rises. It drops from
+ * its peak to its trough halfway through the cycle. It is sig_waveform_saw
+ * delayed by half a cycle.
+ *
+ * @param phase the current phase of the waveform, in radians from 0 to 2pi
+ * @return the generated sample
+ */
+float sig_waveform_sinePhaseSaw(float phase);
+
+/**
  * Type definition for a harmonic series generator function, which
  * calculates the gain of one harmonic in a waveform's Fourier series.
  *
@@ -881,6 +923,29 @@ float sig_waveform_squareHarmonicGain(size_t harmonic);
 float sig_waveform_reverseSawHarmonicGain(size_t harmonic);
 
 /**
+ * @brief Calculates the gain of one harmonic of a triangle wave whose
+ * fundamental is in phase with a sine.
+ *
+ * The harmonics are sines, matching the shape of
+ * sig_waveform_sinePhaseTriangle.
+ *
+ * @param harmonic the harmonic number, starting at 1 for the fundamental
+ * @return the harmonic's gain, or 0.0 for even harmonics
+ */
+float sig_waveform_sinePhaseTriangleHarmonicGain(size_t harmonic);
+
+/**
+ * @brief Calculates the gain of one harmonic of a saw wave whose
+ * fundamental is in phase with a sine.
+ *
+ * The harmonics are sines, matching the shape of sig_waveform_sinePhaseSaw.
+ *
+ * @param harmonic the harmonic number, starting at 1 for the fundamental
+ * @return the harmonic's gain
+ */
+float sig_waveform_sinePhaseSawHarmonicGain(size_t harmonic);
+
+/**
  * @brief A waveform, described both by its shape over one cycle and by
  * its harmonic series.
  *
@@ -928,6 +993,29 @@ extern const struct sig_WaveformShape
     sig_STANDARD_WAVEFORMS[sig_StandardWaveform_COUNT];
 
 /**
+ * @brief The shapes of the standard waveforms, each delayed so that its
+ * fundamental is in phase with a sine, in the order of
+ * sig_StandardWaveform.
+ *
+ * Every waveform starts its cycle either by rising through zero or by
+ * jumping up from its trough to its peak. Use these shapes instead of
+ * sig_STANDARD_WAVEFORMS when waveforms need to line up with each other or
+ * with a shared phase:
+ *  - Crossfading between neighbouring waveforms does not cancel their
+ *    fundamentals, so the level does not dip midway through a crossfade.
+ *  - Waveforms that follow a shared phase, such as a sig_dsp_ClockPhasor,
+ *    cross zero or jump at the same point in the cycle.
+ *  - Every waveform is odd-symmetric, so phase modulation between waveforms
+ *    whose phases are locked together produces no DC offset.
+ *
+ * The sine, square, and reverse saw are the same as in
+ * sig_STANDARD_WAVEFORMS. The triangle is sig_waveform_sinePhaseTriangle,
+ * and the saw is sig_waveform_sinePhaseSaw.
+ */
+extern const struct sig_WaveformShape
+    sig_SINE_PHASE_WAVEFORMS[sig_StandardWaveform_COUNT];
+
+/**
  * @brief Calculates the gain of a harmonic in a standard waveform's
  * Fourier series.
  *
@@ -964,7 +1052,10 @@ enum sig_HarmonicTaper {
  *
  * sig_HarmonicTaper_LANCZOS applies Lanczos sigma factors,
  * sinc(harmonic / (numHarmonics + 1)), which reduce the overshoot of
- * a square wave to about 1.2% of each jump.
+ * a square wave to about 1.2% of each jump. The factors are divided by the
+ * fundamental's factor, so the fundamental always has a weight of 1.0. Then
+ * a waveform's loudness doesn't change between tables with different
+ * numbers of harmonics.
  *
  * @param taper the taper to apply
  * @param harmonic the harmonic number, starting at 1 for the fundamental
@@ -1144,6 +1235,23 @@ void sig_osc_AdditiveWavetableBank_init(
     struct sig_AdditiveWavetableBank* wavetables);
 
 /**
+ * @brief Reads the additive wavetable bank at a phase, from the octave
+ * for a frequency.
+ *
+ * The oscillator's phase accumulator is neither read nor updated, so a
+ * caller can supply a phase from elsewhere, such as a shared phasor.
+ *
+ * @param self the oscillator state
+ * @param frequency the frequency that selects the octave, in Hz
+ * @param phase the phase at which to read, normalized to 0.0-1.0
+ * @param tableIndex the waveform to read, in cycles of the bank
+ * @return the sample at the phase
+ */
+inline float sig_osc_AdditiveWavetableBank_readAtPhase(
+    struct sig_osc_AdditiveWavetableBank* self, float frequency, float phase,
+    float tableIndex);
+
+/**
  * @brief Generates a single sample of the additive wavetable bank's
  * output.
  *
@@ -1167,6 +1275,266 @@ void sig_osc_AdditiveWavetableBank_init(
 inline float sig_osc_AdditiveWavetableBank_generate(
     struct sig_osc_AdditiveWavetableBank* self, float frequency,
     float phaseOffset, float tableIndex, float sampleRate, float* eocOut);
+
+/**
+ * @brief The state of a phasor that runs at a ratio of a reference phase.
+ *
+ * The ratio is numerator / denominator, transposed by a number of octaves.
+ * When the numerator, the denominator, and the octaves are all whole
+ * numbers, the phasor locks to the reference. It counts the reference's
+ * cycles and corrects its phase toward exactly the ratio times the
+ * reference's accumulated phase, so the two phases align at the start of
+ * every (transposed) denominator cycles of the reference. Otherwise, the
+ * phasor follows the reference at the ratio without locking.
+ */
+struct sig_osc_RatioPhasor {
+    /**
+     * @brief The phasor's current phase.
+     *
+     * Normalized to 0.0-1.0.
+     */
+    float phase;
+
+    /**
+     * @brief The reference phase from the previous sample.
+     *
+     */
+    float previousReference;
+
+    /**
+     * @brief The reference cycle within the current period of denominator
+     * cycles.
+     *
+     */
+    uint32_t cycle;
+
+    /**
+     * @brief The fraction of the phase error that the phasor corrects on
+     * each sample.
+     *
+     * A value of 1.0 corrects the error immediately.
+     */
+    float correction;
+
+    /**
+     * @brief The largest amount by which the phase can advance on each
+     * sample.
+     *
+     * In cycles per sample. When the ratio would advance the phase further,
+     * the phasor advances by this amount instead, and does not lock to
+     * the reference.
+     */
+    float maxIncrement;
+};
+
+/**
+ * @brief Initialises a ratio phasor's state.
+ *
+ * The phasor starts aligned with a reference phase of 0.0, corrects
+ * phase errors immediately, and is limited to the Nyquist frequency.
+ *
+ * @param self the state to initialise
+ */
+void sig_osc_RatioPhasor_init(struct sig_osc_RatioPhasor* self);
+
+/**
+ * @brief Calculates how quickly a ratio phasor corrects its phase error.
+ *
+ * When the ratio changes, the phasor's phase stays continuous, and the
+ * difference between its phase and the newly locked phase decays with the
+ * glide time as its time constant.
+ *
+ * @param self the state to update
+ * @param glide the time constant of the phase correction, in seconds; 0.0
+ * corrects the phase immediately
+ * @param sampleRate the sample rate, in Hz
+ */
+void sig_osc_RatioPhasor_calculateCoefficient(
+    struct sig_osc_RatioPhasor* self, float glide, float sampleRate);
+
+/**
+ * @brief Sets the highest frequency at which a ratio phasor can run.
+ *
+ * A reference multiplied by a large ratio or transposed up by many octaves
+ * can exceed the Nyquist frequency, which aliases. Above the maximum
+ * frequency, the phasor runs at the maximum frequency instead, without
+ * locking to the reference.
+ *
+ * @param self the state to update
+ * @param maxFrequency the highest frequency, in Hz, up to half the sample
+ * rate
+ * @param sampleRate the sample rate, in Hz
+ */
+void sig_osc_RatioPhasor_setMaxFrequency(struct sig_osc_RatioPhasor* self,
+    float maxFrequency, float sampleRate);
+
+/**
+ * @brief Generates one sample of a ratio phasor's phase.
+ *
+ * @param self the state to update
+ * @param reference the reference phase, normalized to 0.0-1.0, which must
+ * advance by less than half a cycle per sample
+ * @param numerator the ratio's numerator
+ * @param denominator the ratio's denominator
+ * @param octaves the number of octaves by which to transpose the ratio
+ * @return the phasor's phase, normalized to 0.0-1.0
+ */
+inline float sig_osc_RatioPhasor_generate(struct sig_osc_RatioPhasor* self,
+    float reference, float numerator, float denominator, float octaves);
+
+/**
+ * @brief The state of a phasor that follows a train of clock pulses.
+ *
+ * The phasor completes one cycle per clock period, and wraps at each pulse.
+ * It measures the period between each pair of pulses, and runs at the
+ * frequency of the most recent period. If the pulses stop, it continues at
+ * that frequency.
+ *
+ * When a pulse arrives before or after the phasor wraps, the phasor
+ * does not jump. Instead, it spreads the phase error over the next period,
+ * so that it wraps in time for the next pulse.
+ */
+struct sig_osc_ClockPhasor {
+    /**
+     * @brief The phasor's current phase.
+     *
+     * Normalized to 0.0-1.0.
+     */
+    float phase;
+
+    /**
+     * @brief The amount by which the phase advances on each sample.
+     *
+     * In cycles per sample.
+     */
+    float increment;
+
+    /**
+     * @brief The amount added to the increment while the phasor corrects
+     * its phase error.
+     *
+     * In cycles per sample.
+     */
+    float correction;
+
+    /**
+     * @brief The number of samples for which the phasor continues to
+     * correct its phase error.
+     *
+     */
+    uint32_t correctionSamples;
+
+    /**
+     * @brief The number of samples since the most recent pulse.
+     *
+     */
+    uint32_t samplesSinceLastPulse;
+
+    /**
+     * @brief Whether the phasor has received a pulse.
+     *
+     * The phasor measures the clock's period from its second pulse onward.
+     */
+    bool hasPulsed;
+
+    /**
+     * @brief The pulse input's value on the previous sample.
+     *
+     */
+    float previousPulse;
+};
+
+/**
+ * @brief Initialises a clock phasor's state.
+ *
+ * The phasor's phase stays at 0.0 until it receives its second pulse.
+ *
+ * @param self the state to initialise
+ */
+void sig_osc_ClockPhasor_init(struct sig_osc_ClockPhasor* self);
+
+/**
+ * @brief Generates one sample of a clock phasor's phase.
+ *
+ * @param self the state to update
+ * @param pulse the clock signal; a pulse begins when it rises to or above
+ * the threshold
+ * @param threshold the value at which a rising clock signal begins a pulse
+ * @return the phasor's phase, normalized to 0.0-1.0
+ */
+inline float sig_osc_ClockPhasor_generate(struct sig_osc_ClockPhasor* self,
+    float pulse, float threshold);
+
+/**
+ * @brief The state of a peak frequency follower, which measures how fast
+ * a phase advances, and holds the peak.
+ *
+ * The phase's frequency on each sample is the distance it moved since the
+ * previous sample. When the phase is modulated, this is its instantaneous
+ * frequency, which can be much higher than its unmodulated frequency.
+ * The peak rises immediately, and falls back with a release time.
+ */
+struct sig_osc_PeakFrequency {
+    /**
+     * @brief The phase on the previous sample.
+     *
+     * Normalized to 0.0-1.0.
+     */
+    float previousPhase;
+
+    /**
+     * @brief Whether the follower has received a phase yet.
+     *
+     */
+    bool hasPreviousPhase;
+
+    /**
+     * @brief The peak frequency.
+     *
+     * In Hz.
+     */
+    float peak;
+
+    /**
+     * @brief The amount by which the peak is multiplied on each sample
+     * as it falls.
+     *
+     */
+    float release;
+};
+
+/**
+ * @brief Initialises a peak frequency follower's state.
+ *
+ * The peak starts at 0 Hz, and falls back immediately.
+ *
+ * @param self the state to initialise
+ */
+void sig_osc_PeakFrequency_init(struct sig_osc_PeakFrequency* self);
+
+/**
+ * @brief Calculates how quickly a peak frequency follower's peak falls.
+ *
+ * @param self the state to update
+ * @param release the time constant with which the peak falls, in seconds;
+ * 0.0 makes it fall immediately
+ * @param sampleRate the sample rate, in Hz
+ */
+void sig_osc_PeakFrequency_calculateCoefficient(
+    struct sig_osc_PeakFrequency* self, float release, float sampleRate);
+
+/**
+ * @brief Measures the frequency of one sample of a phase, and returns
+ * the peak.
+ *
+ * @param self the state to update
+ * @param phase the phase, normalized to 0.0-1.0, which must advance by
+ * less than half a cycle per sample
+ * @param sampleRate the sample rate, in Hz
+ * @return the peak frequency, in Hz
+ */
+inline float sig_osc_PeakFrequency_generate(
+    struct sig_osc_PeakFrequency* self, float phase, float sampleRate);
 
 /**
  * @brief A fast sine approximation implemented using a Chamberlin SVF.
@@ -1310,8 +1678,8 @@ struct sig_Allocator {
     struct sig_AllocatorHeap* heap;
 };
 
-#define sig_MALLOC(allocator, T) (T*) allocator->impl->malloc(allocator, \
-    sizeof(T));
+#define sig_MALLOC(allocator, T) ((T*) (allocator)->impl->malloc( \
+    (allocator), sizeof(T)))
 
 /**
  * TLSF Allocator init function.
@@ -1640,6 +2008,98 @@ float sig_Buffer_readLinear(struct sig_Buffer* self, float idx);
 inline float sig_Buffer_readLinearAtPhase(struct sig_Buffer* self, float phase);
 
 /**
+ * @brief The precomputed factors for a fast Fourier transform of one
+ * length.
+ *
+ * The transforms work in place on separate arrays of real and imaginary
+ * parts, using the radix-2 Cooley-Tukey algorithm.
+ */
+struct sig_FFT {
+    /**
+     * @brief The number of samples in each transform.
+     *
+     * Must be a power of two.
+     */
+    size_t length;
+
+    /**
+     * @brief The cosine of each twiddle factor's angle.
+     *
+     * Contains length / 2 values, cos(2pi * m / length).
+     */
+    float_array_ptr cosines;
+
+    /**
+     * @brief The sine of each twiddle factor's angle.
+     *
+     * Contains length / 2 values, sin(2pi * m / length).
+     */
+    float_array_ptr sines;
+};
+
+/**
+ * @brief Initialises an FFT, calculating its twiddle factors.
+ *
+ * @param self the FFT to initialise
+ * @param length the number of samples in each transform, which must be a
+ * power of two
+ * @param cosines an array of length / 2 samples, to fill with the cosines
+ * of the twiddle factors' angles
+ * @param sines an array of length / 2 samples, to fill with the sines of
+ * the twiddle factors' angles
+ */
+void sig_FFT_init(struct sig_FFT* self, size_t length,
+    float_array_ptr cosines, float_array_ptr sines);
+
+/**
+ * @brief Allocates and initialises an FFT.
+ *
+ * @param allocator the allocator to use
+ * @param length the number of samples in each transform, which must be a
+ * power of two
+ * @return the new FFT
+ */
+struct sig_FFT* sig_FFT_new(struct sig_Allocator* allocator, size_t length);
+
+/**
+ * @brief Transforms a signal into its spectrum, in place.
+ *
+ * Calculates X[k] = sum over n of x[n] * e^(-i * 2pi * k * n / length).
+ *
+ * @param self the FFT
+ * @param real the real parts of the signal, which are replaced by the real
+ * parts of the spectrum
+ * @param imaginary the imaginary parts of the signal, which are replaced by
+ * the imaginary parts of the spectrum
+ */
+void sig_FFT_forward(struct sig_FFT* self, float_array_ptr real,
+    float_array_ptr imaginary);
+
+/**
+ * @brief Transforms a spectrum into its signal, in place.
+ *
+ * Calculates x[n] = sum over k of X[k] * e^(i * 2pi * k * n / length).
+ * The result is not divided by the length, so a forward transform followed
+ * by an inverse transform multiplies the signal by the length.
+ *
+ * @param self the FFT
+ * @param real the real parts of the spectrum, which are replaced by the
+ * real parts of the signal
+ * @param imaginary the imaginary parts of the spectrum, which are replaced
+ * by the imaginary parts of the signal
+ */
+void sig_FFT_inverse(struct sig_FFT* self, float_array_ptr real,
+    float_array_ptr imaginary);
+
+/**
+ * @brief Frees an FFT.
+ *
+ * @param allocator the allocator that created the FFT
+ * @param self the FFT to free
+ */
+void sig_FFT_destroy(struct sig_Allocator* allocator, struct sig_FFT* self);
+
+/**
  * @brief Adds one harmonic of a sine table into a Buffer.
  *
  * @param self the buffer to add into
@@ -1654,20 +2114,26 @@ void sig_Buffer_addHarmonic(struct sig_Buffer* self,
     struct sig_Buffer* sineTable, size_t harmonic, float gain, float phase);
 
 /**
- * @brief Fills a Buffer with one cycle of a band-limited waveform by
- * summing its first numHarmonics harmonics.
+ * @brief Fills a Buffer with one cycle of a band-limited waveform made of
+ * its first numHarmonics harmonics.
  *
- * @param self the buffer to fill
- * @param sineTable a buffer containing exactly one cycle of a sine wave,
- * the same length as self
+ * Writes each harmonic into one bin of a spectrum, then transforms the
+ * spectrum into the waveform with one inverse FFT. The cost does not depend
+ * on the number of harmonics.
+ *
+ * @param self the buffer to fill, whose length must be a power of two
+ * @param fft an FFT of the same length as self
+ * @param imaginary a scratch array of the same length as self, which is
+ * overwritten
  * @param shape the waveform to synthesize
- * @param numHarmonics the number of harmonics to sum, which must be less
- * than half the length of the buffer
+ * @param numHarmonics the number of harmonics, which must be less than half
+ * the length of the buffer
  * @param taper the taper to apply to the harmonics
  */
 void sig_Buffer_fillWithHarmonics(struct sig_Buffer* self,
-    struct sig_Buffer* sineTable, const struct sig_WaveformShape* shape,
-    size_t numHarmonics, enum sig_HarmonicTaper taper);
+    struct sig_FFT* fft, float_array_ptr imaginary,
+    const struct sig_WaveformShape* shape, size_t numHarmonics,
+    enum sig_HarmonicTaper taper);
 
 /**
  * Reads from the buffer using cubic interpolation.
@@ -1816,7 +2282,8 @@ struct sig_AdditiveWavetableBank {
  * the bank copies them
  * @param numShapes the number of shapes
  * @param numLevels the number of octave levels
- * @param tableLength the number of samples in each table
+ * @param tableLength the number of samples in each table, which must be a
+ * power of two
  * @param lowestFrequency the frequency at the bottom of the lowest level
  * @param maxHarmonicFrequency the highest frequency any harmonic may
  * reach, in Hz
@@ -1844,10 +2311,13 @@ size_t sig_AdditiveWavetableBank_numHarmonics(
  * @brief Synthesizes the tables for all shapes at all levels.
  *
  * @param self the additive wavetable bank
- * @param sineTable a buffer containing one cycle of a sine wave
+ * @param fft an FFT of the bank's table length
+ * @param imaginary a scratch array of the bank's table length, which is
+ * overwritten
  */
 void sig_AdditiveWavetableBank_fill(
-    struct sig_AdditiveWavetableBank* self, struct sig_Buffer* sineTable);
+    struct sig_AdditiveWavetableBank* self, struct sig_FFT* fft,
+    float_array_ptr imaginary);
 
 /**
  * @brief Calculates which octave level to read for a frequency.
@@ -1880,6 +2350,18 @@ inline float sig_AdditiveWavetableBank_readLinearAtPhase(
 void sig_AdditiveWavetableBank_destroy(struct sig_Allocator* allocator,
     struct sig_AdditiveWavetableBank* self);
 
+
+/**
+ * @brief Allocates an array of samples.
+ *
+ * The samples are not initialised.
+ *
+ * @param allocator the allocator to use
+ * @param length the number of samples in the array
+ * @return the new array
+ */
+float_array_ptr sig_samples_new(struct sig_Allocator* allocator,
+    size_t length);
 
 float_array_ptr sig_AudioBlock_new(struct sig_Allocator* allocator,
     struct sig_AudioSettings* audioSettings);
@@ -2086,6 +2568,1113 @@ inline float sig_sineWavefolder(float x, float gain, float factor);
  */
 inline float sig_softClip(float x, float threshold);
 
+/**
+ * @brief An onset detector that converts audio into an onset strength
+ * envelope.
+ *
+ * The detector follows the SuperFlux design (Bock and Widmer, 2013),
+ * with adaptive whitening (Stowell and Plumbley, 2007). It analyses
+ * one Hann-windowed frame per hop. A filterbank of triangular filters,
+ * 24 per octave from 30 Hz to 6 kHz or 0.45 times the sample rate,
+ * reduces each frame's magnitude spectrum to logarithmically spaced
+ * bands. The detector divides each band by the largest of its peak
+ * follower, -30 dB of the loudest band's peak, and the threshold, and
+ * compresses the result with ln(1 + x). The envelope value is the
+ * weighted mean over bands of each band's increase over the largest of
+ * the three neighbouring bands in the frame diffLagHops hops earlier,
+ * less 0.022, and clipped at zero. Each band's weight is half the
+ * distance between its neighbours' centres, in steps of 1/24 octave,
+ * capped at 2, which gives the merged low-frequency bands their share
+ * of the envelope. The envelope therefore lies between 0 and ln 2,
+ * and is exactly zero in silence and in noise below the threshold.
+ */
+struct sig_tempo_OnsetDetector {
+    /**
+     * @brief The sample rate in Hz.
+     */
+    float sampleRate;
+
+    /**
+     * @brief The number of samples in each analysis frame.
+     *
+     * Must be a power of two. The frame is also the FFT length.
+     */
+    size_t windowLength;
+
+    /**
+     * @brief The number of samples between the starts of consecutive
+     * frames.
+     */
+    size_t hopLength;
+
+    /**
+     * @brief The number of hops between a frame and the earlier frame
+     * that it is compared with.
+     */
+    size_t diffLagHops;
+
+    /**
+     * @brief The level below which the detector ignores sound.
+     *
+     * In dB relative to a full-scale sine.
+     */
+    float threshold;
+
+    /**
+     * @brief The threshold as a band magnitude, where a full-scale
+     * sine's peak bin has a magnitude of about 1.
+     */
+    float thresholdMagnitude;
+
+    /**
+     * @brief The number of bands in the filterbank.
+     */
+    size_t numBands;
+
+    /**
+     * @brief The FFT that analyses frames.
+     *
+     * Its length must be windowLength.
+     */
+    struct sig_FFT* fft;
+
+    /**
+     * @brief The Hann window applied to each frame.
+     *
+     * Contains windowLength samples.
+     */
+    float_array_ptr window;
+
+    /**
+     * @brief The ring buffer that collects the samples of the current
+     * frame.
+     *
+     * Contains windowLength samples.
+     */
+    float_array_ptr frame;
+
+    /**
+     * @brief The real parts of the current frame's spectrum.
+     *
+     * Contains windowLength samples.
+     */
+    float_array_ptr real;
+
+    /**
+     * @brief The imaginary parts of the current frame's spectrum.
+     *
+     * Contains windowLength samples.
+     */
+    float_array_ptr imaginary;
+
+    /**
+     * @brief The FFT bins at the filterbank's centre frequencies.
+     *
+     * Contains numBands + 2 bin indices, in increasing order. Band j
+     * spans from bin bandEdges[j] to bin bandEdges[j + 2], and peaks at
+     * bin bandEdges[j + 1].
+     */
+    float_array_ptr bandEdges;
+
+    /**
+     * @brief Each band's weight in the envelope.
+     *
+     * Contains numBands values.
+     */
+    float_array_ptr bandWeights;
+
+    /**
+     * @brief The sum of the band weights.
+     */
+    float totalWeight;
+
+    /**
+     * @brief Each band's peak follower, which whitens the bands.
+     *
+     * Contains numBands values.
+     */
+    float_array_ptr bandPeaks;
+
+    /**
+     * @brief The whitened and compressed bands of the most recent
+     * frames.
+     *
+     * A ring buffer of diffLagHops + 1 rows of numBands values.
+     */
+    float_array_ptr bandRows;
+
+    /**
+     * @brief The position in frame where the next sample is written,
+     * wrapping at windowLength.
+     */
+    size_t frameWriteIdx;
+
+    /**
+     * @brief The number of samples since the last analysis, from 0 to
+     * hopLength - 1.
+     */
+    size_t hopIdx;
+
+    /**
+     * @brief The row of bandRows that contains the newest frame's
+     * bands.
+     */
+    size_t currentRow;
+
+    /**
+     * @brief Whether the most recent call to generate completed an
+     * analysis.
+     */
+    bool hasNewValue;
+
+    /**
+     * @brief The most recent onset strength value.
+     */
+    float envelope;
+};
+
+/**
+ * @brief Calculates the number of bands in an onset detector's
+ * filterbank.
+ *
+ * @param sampleRate the sample rate in Hz
+ * @param windowLength the number of samples in each analysis frame
+ * @return the number of bands
+ */
+size_t sig_tempo_OnsetDetector_calcNumBands(float sampleRate,
+    size_t windowLength);
+
+/**
+ * @brief Initialises an onset detector, filling its window and
+ * filterbank, and clearing its buffers and state.
+ *
+ * @param self the detector to initialise
+ * @param sampleRate the sample rate in Hz
+ * @param windowLength the number of samples in each analysis frame,
+ * which must be a power of two
+ * @param hopLength the number of samples between the starts of
+ * consecutive frames
+ * @param diffLagHops the number of hops between a frame and the earlier
+ * frame that it is compared with
+ * @param threshold the level below which the detector ignores sound, in
+ * dB relative to a full-scale sine
+ * @param fft an FFT of windowLength samples
+ * @param window an array of windowLength samples, which is filled with
+ * the Hann window
+ * @param frame an array of windowLength samples, which is cleared
+ * @param real an array of windowLength samples, which is cleared
+ * @param imaginary an array of windowLength samples, which is cleared
+ * @param bandEdges an array of numBands + 2 values, which is filled
+ * with the filterbank's bins, where numBands is the value that
+ * sig_tempo_OnsetDetector_calcNumBands returns
+ * @param bandWeights an array of numBands values, which is filled with
+ * the bands' weights
+ * @param bandPeaks an array of numBands values, which is cleared
+ * @param bandRows an array of (diffLagHops + 1) * numBands values,
+ * which is cleared
+ */
+void sig_tempo_OnsetDetector_init(struct sig_tempo_OnsetDetector* self,
+    float sampleRate, size_t windowLength, size_t hopLength,
+    size_t diffLagHops, float threshold, struct sig_FFT* fft,
+    float_array_ptr window, float_array_ptr frame, float_array_ptr real,
+    float_array_ptr imaginary, float_array_ptr bandEdges,
+    float_array_ptr bandWeights, float_array_ptr bandPeaks,
+    float_array_ptr bandRows);
+
+/**
+ * @brief Allocates and initialises an onset detector.
+ *
+ * @param allocator the allocator to use
+ * @param sampleRate the sample rate in Hz
+ * @param windowLength the number of samples in each analysis frame,
+ * which must be a power of two
+ * @param hopLength the number of samples between the starts of
+ * consecutive frames
+ * @param diffLagHops the number of hops between a frame and the earlier
+ * frame that it is compared with
+ * @param threshold the level below which the detector ignores sound, in
+ * dB relative to a full-scale sine
+ * @return the new detector
+ */
+struct sig_tempo_OnsetDetector* sig_tempo_OnsetDetector_new(
+    struct sig_Allocator* allocator, float sampleRate, size_t windowLength,
+    size_t hopLength, size_t diffLagHops, float threshold);
+
+/**
+ * @brief Processes one sample and reports the current onset strength.
+ *
+ * The detector collects samples into a frame and analyses the frame
+ * once per hop. The returned value changes only when the detector
+ * completes an analysis.
+ *
+ * @param self the detector
+ * @param sample the input sample
+ * @return the current onset strength, from 0 to ln 2
+ */
+float sig_tempo_OnsetDetector_generate(struct sig_tempo_OnsetDetector* self,
+    float sample);
+
+/**
+ * @brief Reports whether the most recent call to generate completed an
+ * analysis and produced a new envelope value.
+ *
+ * @param self the detector
+ * @return true if the most recent sample completed an analysis
+ */
+inline bool sig_tempo_OnsetDetector_hasNewValue(
+    struct sig_tempo_OnsetDetector* self);
+
+/**
+ * @brief Sets the level below which the detector ignores sound.
+ *
+ * @param self the detector
+ * @param threshold the threshold in dB relative to a full-scale sine,
+ * from -90 to -30
+ */
+inline void sig_tempo_OnsetDetector_setThreshold(
+    struct sig_tempo_OnsetDetector* self, float threshold);
+
+/**
+ * @brief Frees an onset detector.
+ *
+ * @param allocator the allocator that created the detector
+ * @param self the detector to free
+ */
+void sig_tempo_OnsetDetector_destroy(struct sig_Allocator* allocator,
+    struct sig_tempo_OnsetDetector* self);
+
+/**
+ * @brief A tempo estimator that tracks the tempo of an onset strength
+ * envelope.
+ *
+ * The estimator keeps an 8-second window of envelope values. Every 16
+ * values, it scores each candidate tempo in its current range, in steps
+ * of 1 BPM, by autocorrelating the window at the candidate's beat
+ * interval and at twice that interval. A log-normal prior, centred at
+ * 120 BPM with a width of one octave, weights the scores, so that
+ * octave-related tempos resolve to a consistent metrical level. The
+ * estimator adopts the best candidate immediately when it lies within
+ * 2 BPM of the current estimate. A more distant candidate must score 30
+ * percent higher than the current estimate to replace it. When the
+ * estimate has stayed within 8 percent of itself for 4 seconds, a
+ * candidate within 8 percent of 2, 3, or 4 times or a half, third, or
+ * quarter of it must score twice as high. When the window contains no
+ * onsets, the estimator holds its last estimate.
+ */
+struct sig_tempo_TempoEstimator {
+    /**
+     * @brief The number of envelope values per second.
+     */
+    float envelopeRate;
+
+    /**
+     * @brief The slowest tempo that the estimator supports, in beats
+     * per minute.
+     *
+     * The window contains four beats at this tempo.
+     */
+    float lowestTempo;
+
+    /**
+     * @brief The fastest tempo that the estimator supports, in beats
+     * per minute.
+     */
+    float highestTempo;
+
+    /**
+     * @brief The slowest tempo that the estimator currently considers,
+     * in beats per minute.
+     */
+    float minTempo;
+
+    /**
+     * @brief The fastest tempo that the estimator currently considers,
+     * in beats per minute.
+     */
+    float maxTempo;
+
+    /**
+     * @brief The centre of the tempo prior, in beats per minute.
+     */
+    float priorCenter;
+
+    /**
+     * @brief The width of the tempo prior, in octaves.
+     */
+    float priorWidth;
+
+    /**
+     * @brief The number of envelope values that the window contains.
+     */
+    size_t windowLength;
+
+    /**
+     * @brief The number of envelope values between estimations.
+     */
+    size_t estimateInterval;
+
+    /**
+     * @brief The number of envelope values required before the first
+     * estimation.
+     */
+    size_t minimumValues;
+
+    /**
+     * @brief The number of candidate tempos from lowestTempo to
+     * highestTempo.
+     */
+    size_t numCandidates;
+
+    /**
+     * @brief The difference between consecutive candidate tempos, in
+     * beats per minute.
+     */
+    float candidateStep;
+
+    /**
+     * @brief The ring buffer of envelope values.
+     *
+     * Contains windowLength values.
+     */
+    float_array_ptr envelope;
+
+    /**
+     * @brief The prior-weighted score of each candidate tempo.
+     *
+     * Contains numCandidates values.
+     */
+    float_array_ptr scores;
+
+    /**
+     * @brief The position in envelope where the next value is written,
+     * wrapping at windowLength.
+     */
+    size_t writeIdx;
+
+    /**
+     * @brief The number of envelope values received.
+     */
+    size_t valueCount;
+
+    /**
+     * @brief The current tempo estimate, in beats per minute.
+     *
+     * Zero until the first estimate.
+     */
+    float tempo;
+
+    /**
+     * @brief The number of consecutive estimations in which the
+     * estimate stayed within 8 percent of the previous estimate.
+     *
+     * The estimator does not change it while it holds its estimate
+     * through silence.
+     */
+    size_t stableCount;
+};
+
+/**
+ * @brief Calculates the number of envelope values in a tempo
+ * estimator's or beat tracker's window, which contains four beats at
+ * the slowest tempo.
+ *
+ * @param envelopeRate the number of envelope values per second
+ * @param lowestTempo the slowest tempo, in beats per minute
+ * @return the number of values in the window
+ */
+size_t sig_tempo_calcWindowLength(float envelopeRate, float lowestTempo);
+
+/**
+ * @brief Initialises a tempo estimator, clearing its window and state.
+ *
+ * The estimator considers every tempo from lowestTempo to highestTempo
+ * until sig_tempo_TempoEstimator_setTempoRange restricts the range.
+ *
+ * @param self the estimator to initialise
+ * @param envelopeRate the number of envelope values per second
+ * @param lowestTempo the slowest tempo to support, in beats per minute
+ * @param highestTempo the fastest tempo to support, in beats per minute
+ * @param envelope an array of windowLength values, which is cleared,
+ * where windowLength is the value that sig_tempo_calcWindowLength
+ * returns
+ * @param scores an array of (highestTempo - lowestTempo + 1) values,
+ * which is cleared
+ */
+void sig_tempo_TempoEstimator_init(struct sig_tempo_TempoEstimator* self,
+    float envelopeRate, float lowestTempo, float highestTempo,
+    float_array_ptr envelope, float_array_ptr scores);
+
+/**
+ * @brief Allocates and initialises a tempo estimator.
+ *
+ * @param allocator the allocator to use
+ * @param envelopeRate the number of envelope values per second
+ * @param lowestTempo the slowest tempo to support, in beats per minute
+ * @param highestTempo the fastest tempo to support, in beats per minute
+ * @return the new estimator
+ */
+struct sig_tempo_TempoEstimator* sig_tempo_TempoEstimator_new(
+    struct sig_Allocator* allocator, float envelopeRate, float lowestTempo,
+    float highestTempo);
+
+/**
+ * @brief Restricts the tempos that the estimator considers, without
+ * allocating.
+ *
+ * The estimator limits the range to the tempos it supports. When the
+ * current estimate lies outside the new range, the estimator replaces
+ * it with the best candidate in the range at its next estimation.
+ *
+ * @param self the estimator
+ * @param minTempo the slowest tempo to consider, in beats per minute
+ * @param maxTempo the fastest tempo to consider, in beats per minute
+ */
+inline void sig_tempo_TempoEstimator_setTempoRange(
+    struct sig_tempo_TempoEstimator* self, float minTempo, float maxTempo);
+
+/**
+ * @brief Processes one envelope value and reports the current tempo
+ * estimate.
+ *
+ * The estimate changes only when the estimator runs an estimation. The
+ * window needs about a second of envelope before the first estimate.
+ *
+ * @param self the estimator
+ * @param value the envelope value
+ * @return the current tempo estimate in beats per minute, or zero before
+ * the first estimate
+ */
+float sig_tempo_TempoEstimator_generate(struct sig_tempo_TempoEstimator* self,
+    float value);
+
+/**
+ * @brief Frees a tempo estimator.
+ *
+ * @param allocator the allocator that created the estimator
+ * @param self the estimator to free
+ */
+void sig_tempo_TempoEstimator_destroy(struct sig_Allocator* allocator,
+    struct sig_tempo_TempoEstimator* self);
+
+/**
+ * @brief The number of consecutive outliers after which a beat
+ * tracker's follower re-anchors its grid.
+ */
+#define sig_tempo_BeatTracker_RELOCK_OUTLIERS 3
+
+/**
+ * @brief The number of consecutive outliers after which a beat
+ * tracker's follower re-anchors its grid while it holds a tapped phase.
+ */
+#define sig_tempo_BeatTracker_HELD_RELOCK_OUTLIERS 8
+
+/**
+ * @brief The number of tap intervals over which a beat tracker measures
+ * a tapped tempo.
+ */
+#define sig_tempo_BeatTracker_TAP_INTERVALS 4
+
+/**
+ * @brief The gain with which a beat tracker's output closes its gap to
+ * the grid, per beat.
+ */
+#define sig_tempo_BeatTracker_CHASE_GAIN 2.0
+
+/**
+ * @brief The slowest rate at which a beat tracker's output advances,
+ * relative to the grid's tempo.
+ */
+#define sig_tempo_BeatTracker_MIN_RATE 0.5
+
+/**
+ * @brief The fastest rate at which a beat tracker's output advances,
+ * relative to the grid's tempo.
+ */
+#define sig_tempo_BeatTracker_MAX_RATE 1.5
+
+/**
+ * @brief The states of a beat tracker's follower.
+ */
+enum sig_tempo_BeatTracker_State {
+    /**
+     * @brief The follower has no tempo, because no tempo estimate has
+     * arrived.
+     */
+    sig_tempo_BeatTracker_State_WAITING = 0,
+
+    /**
+     * @brief The follower has a tempo, but has not anchored its grid to
+     * a beat.
+     */
+    sig_tempo_BeatTracker_State_SEARCHING,
+
+    /**
+     * @brief Strong beats are arriving, and the follower corrects its
+     * grid with them.
+     */
+    sig_tempo_BeatTracker_State_TRACKING,
+
+    /**
+     * @brief No strong beat has arrived for the silence timeout. The
+     * grid keeps running.
+     */
+    sig_tempo_BeatTracker_State_SILENT
+};
+
+/**
+ * @brief A beat tracker that finds beats in an onset strength envelope,
+ * and follows them with a continuous beat phase.
+ *
+ * The tracker keeps an 8-second window of the envelope. Every 4
+ * envelope values, it finds the window's beats with Ellis's (2007)
+ * dynamic program. Beats more than half a beat interval behind the
+ * newest envelope value commit to the follower, oldest first. The
+ * tracker refines each committed beat's time to a fraction of a hop,
+ * and subtracts the onset detector's latency.
+ *
+ * The follower predicts beats from a grid, with a beat interval and
+ * the sample time of its most recent beat. Each strong committed beat
+ * within a quarter of a beat of the grid corrects the grid's phase,
+ * and the interval since the previous accepted beat corrects the
+ * grid's beat interval. After three consecutive outliers, the follower
+ * re-anchors the grid. The follower's output is a beat position that
+ * advances on every sample, chases the grid without jumping, never
+ * moves backward, and never runs faster than one and a half times the
+ * tempo.
+ *
+ * A tap anchors the grid at the current sample, and taps less than a
+ * beat at the slowest allowed tempo apart set the beat interval. After
+ * a tap, until the follower becomes silent, the follower holds the
+ * tapped phase and tempo: the dynamic program favours the follower's
+ * predicted beats, a relock needs eight consecutive outliers, and the
+ * follower does not reseed from the tempo estimate.
+ *
+ * The tracker assumes that the caller passes envelope value i to
+ * sig_tempo_BeatTracker_analyse after advancing the follower
+ * (i + 1) * hopLength samples.
+ */
+struct sig_tempo_BeatTracker {
+    /**
+     * @brief The sample rate in Hz.
+     */
+    float sampleRate;
+
+    /**
+     * @brief The number of audio samples per envelope value.
+     */
+    size_t hopLength;
+
+    /**
+     * @brief The number of envelope values per second.
+     */
+    float envelopeRate;
+
+    /**
+     * @brief The onset detector's latency, which the tracker subtracts
+     * from each beat's time.
+     *
+     * In samples.
+     */
+    float latency;
+
+    /**
+     * @brief The slowest tempo that the tracker supports, in beats per
+     * minute.
+     *
+     * The window contains four beats at this tempo.
+     */
+    float lowestTempo;
+
+    /**
+     * @brief The fastest tempo that the tracker supports, in beats per
+     * minute.
+     */
+    float highestTempo;
+
+    /**
+     * @brief The slowest tempo that the tracker currently allows, in
+     * beats per minute.
+     */
+    float minTempo;
+
+    /**
+     * @brief The fastest tempo that the tracker currently allows, in
+     * beats per minute.
+     */
+    float maxTempo;
+
+    /**
+     * @brief How strongly the follower corrects its grid, from 0 to 1.
+     */
+    float responsiveness;
+
+    /**
+     * @brief The number of beats without a strong beat after which the
+     * follower becomes silent.
+     */
+    float silenceTimeout;
+
+    /**
+     * @brief The number of envelope values that the window contains.
+     */
+    size_t windowLength;
+
+    /**
+     * @brief The ring buffer of envelope values.
+     *
+     * Contains windowLength values.
+     */
+    float_array_ptr envelope;
+
+    /**
+     * @brief The dynamic program's cumulative score at each window
+     * position.
+     *
+     * Contains windowLength values.
+     */
+    float_array_ptr scores;
+
+    /**
+     * @brief The distance to the best predecessor of each window
+     * position, in envelope values.
+     *
+     * Zero marks a position with no predecessor. Contains windowLength
+     * values.
+     */
+    float_array_ptr predecessors;
+
+    /**
+     * @brief The dynamic program's penalty for each predecessor
+     * distance.
+     *
+     * Contains windowLength values.
+     */
+    float_array_ptr penalties;
+
+    /**
+     * @brief The position in envelope where the next value is written,
+     * wrapping at windowLength.
+     */
+    size_t writeIdx;
+
+    /**
+     * @brief The number of envelope values received.
+     */
+    size_t valueCount;
+
+    /**
+     * @brief The index of the most recently committed beat's envelope
+     * value, counted from the first value received.
+     */
+    size_t lastCommittedIndex;
+
+    /**
+     * @brief Whether any beat has committed.
+     */
+    bool hasCommitted;
+
+    /**
+     * @brief The envelope value against which the tracker measures the
+     * strength of committed beats.
+     */
+    float strengthReference;
+
+    /**
+     * @brief The follower's state.
+     */
+    enum sig_tempo_BeatTracker_State state;
+
+    /**
+     * @brief The grid's beat interval, in samples.
+     */
+    double period;
+
+    /**
+     * @brief The sample time of the grid's most recent beat.
+     */
+    double anchor;
+
+    /**
+     * @brief The number of samples that the follower has advanced.
+     */
+    double sampleClock;
+
+    /**
+     * @brief The follower's output beat position, in beats.
+     *
+     * The phase is its fractional part.
+     */
+    double position;
+
+    /**
+     * @brief The sample time of the most recently accepted beat.
+     */
+    double lastAcceptedTime;
+
+    /**
+     * @brief Whether lastAcceptedTime contains a beat that can measure
+     * the beat interval.
+     */
+    bool hasLastAccepted;
+
+    /**
+     * @brief The sample time of the most recent strong beat.
+     */
+    double lastStrongBeatTime;
+
+    /**
+     * @brief The number of consecutive outliers.
+     */
+    size_t numOutliers;
+
+    /**
+     * @brief The sample times of the consecutive outliers.
+     */
+    double outlierTimes[sig_tempo_BeatTracker_HELD_RELOCK_OUTLIERS];
+
+    /**
+     * @brief Whether the follower holds a tapped phase and tempo.
+     *
+     * A tap sets it, and silence clears it.
+     */
+    bool isHoldingTaps;
+
+    /**
+     * @brief The sample times of the most recent taps, oldest first.
+     */
+    double tapTimes[sig_tempo_BeatTracker_TAP_INTERVALS + 1];
+
+    /**
+     * @brief The number of taps in tapTimes.
+     */
+    size_t numTaps;
+
+    /**
+     * @brief The follower's confidence, from 0 to 1.
+     */
+    float confidence;
+};
+
+/**
+ * @brief Initialises a beat tracker, clearing its buffers and state.
+ *
+ * The tracker allows every tempo from lowestTempo to highestTempo,
+ * with a responsiveness of 0.6 and a silence timeout of four beats,
+ * until its setter functions change them.
+ *
+ * @param self the tracker to initialise
+ * @param sampleRate the sample rate in Hz
+ * @param hopLength the number of audio samples per envelope value
+ * @param latency the onset detector's latency, in samples
+ * @param lowestTempo the slowest tempo to support, in beats per minute
+ * @param highestTempo the fastest tempo to support, in beats per minute
+ * @param envelope an array of windowLength values, which is cleared,
+ * where windowLength is the value that sig_tempo_calcWindowLength
+ * returns
+ * @param scores an array of windowLength values, which is cleared
+ * @param predecessors an array of windowLength values, which is cleared
+ * @param penalties an array of windowLength values, which is cleared
+ */
+void sig_tempo_BeatTracker_init(struct sig_tempo_BeatTracker* self,
+    float sampleRate, size_t hopLength, float latency, float lowestTempo,
+    float highestTempo, float_array_ptr envelope, float_array_ptr scores,
+    float_array_ptr predecessors, float_array_ptr penalties);
+
+/**
+ * @brief Allocates and initialises a beat tracker.
+ *
+ * @param allocator the allocator to use
+ * @param sampleRate the sample rate in Hz
+ * @param hopLength the number of audio samples per envelope value
+ * @param latency the onset detector's latency, in samples
+ * @param lowestTempo the slowest tempo to support, in beats per minute
+ * @param highestTempo the fastest tempo to support, in beats per minute
+ * @return the new tracker
+ */
+struct sig_tempo_BeatTracker* sig_tempo_BeatTracker_new(
+    struct sig_Allocator* allocator, float sampleRate, size_t hopLength,
+    float latency, float lowestTempo, float highestTempo);
+
+/**
+ * @brief Processes one envelope value.
+ *
+ * Every 4 values, the tracker runs the dynamic program and commits
+ * beats to the follower. The first tempo estimate starts the follower.
+ * When the estimate's beat interval differs from the grid's by more
+ * than a factor of 1.33, the follower re-anchors its grid at the
+ * estimate's tempo and searches again.
+ *
+ * @param self the tracker
+ * @param value the onset strength value
+ * @param tempo the current tempo estimate in beats per minute, or zero
+ * when no estimate exists, in which case a follower started by taps
+ * uses its own tempo
+ */
+void sig_tempo_BeatTracker_analyse(struct sig_tempo_BeatTracker* self,
+    float value, float tempo);
+
+/**
+ * @brief Taps a beat at the current sample.
+ *
+ * The follower anchors its grid at the current sample, without
+ * subtracting the detector's latency, raises its confidence to at least
+ * 0.5, and tracks. When the previous tap lies within a beat at the
+ * slowest allowed tempo, the follower sets its beat interval to the
+ * mean of the intervals between its last four taps, limited to the
+ * tempo range. Before the follower has a tempo, the first tap only
+ * starts an interval, and the second starts the follower.
+ *
+ * @param self the tracker
+ */
+void sig_tempo_BeatTracker_tap(struct sig_tempo_BeatTracker* self);
+
+/**
+ * @brief Advances the follower by one audio sample and reports the
+ * beat phase.
+ *
+ * @param self the tracker
+ * @return the beat phase, from 0 to 1, which wraps at each beat and
+ * otherwise never falls; zero before the first tempo estimate
+ */
+inline float sig_tempo_BeatTracker_follow(struct sig_tempo_BeatTracker* self);
+
+/**
+ * @brief Reports the follower's tempo.
+ *
+ * @param self the tracker
+ * @return the grid's tempo in beats per minute, or zero before the
+ * first tempo estimate
+ */
+inline float sig_tempo_BeatTracker_tempo(struct sig_tempo_BeatTracker* self);
+
+/**
+ * @brief Reports the follower's confidence.
+ *
+ * @param self the tracker
+ * @return the confidence, from 0 to 1, which is zero unless the
+ * follower is tracking
+ */
+inline float sig_tempo_BeatTracker_confidence(
+    struct sig_tempo_BeatTracker* self);
+
+/**
+ * @brief Reports the follower's state.
+ *
+ * @param self the tracker
+ * @return the follower's state
+ */
+inline enum sig_tempo_BeatTracker_State sig_tempo_BeatTracker_state(
+    struct sig_tempo_BeatTracker* self);
+
+/**
+ * @brief Sets how strongly the follower corrects its grid.
+ *
+ * The phase gain is 0.2 + 0.7 * responsiveness, and the beat interval
+ * gain is 0.1 + 0.7 * responsiveness.
+ *
+ * @param self the tracker
+ * @param responsiveness the responsiveness, from 0 to 1
+ */
+inline void sig_tempo_BeatTracker_setResponsiveness(
+    struct sig_tempo_BeatTracker* self, float responsiveness);
+
+/**
+ * @brief Restricts the tempos that the tracker allows, without
+ * allocating.
+ *
+ * The tracker limits the range to the tempos it supports, and limits
+ * the dynamic program's tempo and the grid's tempo to the range.
+ *
+ * @param self the tracker
+ * @param minTempo the slowest tempo to allow, in beats per minute
+ * @param maxTempo the fastest tempo to allow, in beats per minute
+ */
+inline void sig_tempo_BeatTracker_setTempoRange(
+    struct sig_tempo_BeatTracker* self, float minTempo, float maxTempo);
+
+/**
+ * @brief Sets how many beats without a strong beat make the follower
+ * silent.
+ *
+ * @param self the tracker
+ * @param silenceTimeout the timeout in beats, from 1 to 16
+ */
+inline void sig_tempo_BeatTracker_setSilenceTimeout(
+    struct sig_tempo_BeatTracker* self, float silenceTimeout);
+
+/**
+ * @brief Frees a beat tracker.
+ *
+ * @param allocator the allocator that created the tracker
+ * @param self the tracker to free
+ */
+void sig_tempo_BeatTracker_destroy(struct sig_Allocator* allocator,
+    struct sig_tempo_BeatTracker* self);
+
+/**
+ * @brief The start of the shifted phase range that arms a clock
+ * generator's next trigger.
+ */
+#define sig_tempo_ClockGenerator_ARM_START 0.25f
+
+/**
+ * @brief The end of the shifted phase range that arms a clock
+ * generator's next trigger.
+ */
+#define sig_tempo_ClockGenerator_ARM_END 0.75f
+
+/**
+ * @brief The outputs of a clock generator for one sample.
+ */
+struct sig_tempo_ClockGenerator_Outputs {
+    /**
+     * @brief The clock gate, 1 during a trigger and 0 otherwise.
+     */
+    float clock;
+
+    /**
+     * @brief The beat phase, shifted earlier by the lead, from 0 to 1.
+     *
+     * Zero while the clock is muted.
+     */
+    float phase;
+
+    /**
+     * @brief The follower's tempo, in beats per minute.
+     *
+     * Zero before the first tempo estimate.
+     */
+    float bpm;
+
+    /**
+     * @brief The follower's confidence, from 0 to 1.
+     */
+    float confidence;
+};
+
+/**
+ * @brief A clock generator that converts a beat tracker's phase into
+ * clock triggers.
+ *
+ * The generator shifts the phase earlier by the lead, converted to
+ * beats at the follower's tempo, and fires a trigger when the shifted
+ * phase wraps, that is, when it falls by more than half a cycle
+ * between samples. After a trigger, the generator fires again only
+ * after the shifted phase has passed through the middle of the beat,
+ * from 0.25 to 0.75, so a tempo change that steps the shifted phase
+ * back across the wrap cannot fire a second trigger for one beat.
+ *
+ * The clock is active while the follower is tracking, and while it is
+ * silent if the silence behaviour is free-run. While the clock is
+ * muted, the clock gate stays low and the phase is zero.
+ */
+struct sig_tempo_ClockGenerator {
+    /**
+     * @brief The sample rate in Hz.
+     */
+    float sampleRate;
+
+    /**
+     * @brief How far ahead of each predicted beat the clock fires.
+     *
+     * In seconds, from 0 to 0.25.
+     */
+    float lead;
+
+    /**
+     * @brief The length of each trigger.
+     *
+     * In seconds, from 0.001 to 0.1.
+     */
+    float triggerDuration;
+
+    /**
+     * @brief Whether the clock mutes, 0, or free-runs, 1, while the
+     * follower is silent.
+     */
+    float silenceBehaviour;
+
+    /**
+     * @brief The length of each trigger, in samples.
+     */
+    uint32_t triggerSamples;
+
+    /**
+     * @brief The number of samples that remain in the current trigger.
+     */
+    uint32_t triggerSamplesRemaining;
+
+    /**
+     * @brief The shifted phase on the previous sample.
+     */
+    float previousPhase;
+
+    /**
+     * @brief Whether the clock was active on the previous sample.
+     */
+    bool wasActive;
+
+    /**
+     * @brief Whether the next wrap of the shifted phase fires a
+     * trigger.
+     */
+    bool isArmed;
+};
+
+/**
+ * @brief Initialises a clock generator, with no lead, triggers of
+ * 10 ms, and a clock that mutes while the follower is silent.
+ *
+ * @param self the generator to initialise
+ * @param sampleRate the sample rate in Hz
+ */
+void sig_tempo_ClockGenerator_init(struct sig_tempo_ClockGenerator* self,
+    float sampleRate);
+
+/**
+ * @brief Sets how far ahead of each predicted beat the clock fires.
+ *
+ * @param self the generator
+ * @param lead the lead in seconds, from 0 to 0.25
+ */
+inline void sig_tempo_ClockGenerator_setLead(
+    struct sig_tempo_ClockGenerator* self, float lead);
+
+/**
+ * @brief Sets the length of each trigger.
+ *
+ * @param self the generator
+ * @param triggerDuration the trigger duration in seconds, from 0.001
+ * to 0.1
+ */
+inline void sig_tempo_ClockGenerator_setTriggerDuration(
+    struct sig_tempo_ClockGenerator* self, float triggerDuration);
+
+/**
+ * @brief Sets whether the clock mutes or free-runs while the follower
+ * is silent.
+ *
+ * @param self the generator
+ * @param silenceBehaviour 0 to mute, or 1 to free-run
+ */
+inline void sig_tempo_ClockGenerator_setSilenceBehaviour(
+    struct sig_tempo_ClockGenerator* self, float silenceBehaviour);
+
+/**
+ * @brief Generates one sample of the clock generator's outputs.
+ *
+ * @param self the generator
+ * @param phase the beat tracker's phase, from 0 to 1
+ * @param tempo the beat tracker's tempo, in beats per minute
+ * @param confidence the beat tracker's confidence, from 0 to 1
+ * @param state the beat tracker's state
+ * @param outputs the outputs to write
+ */
+inline void sig_tempo_ClockGenerator_generate(
+    struct sig_tempo_ClockGenerator* self, float phase, float tempo,
+    float confidence, enum sig_tempo_BeatTracker_State state,
+    struct sig_tempo_ClockGenerator_Outputs* outputs);
+
 // TODO: Should the signal argument at least be defined
 // as a struct sig_dsp_Signal*, rather than void*?
 // Either way, this is cast by the implementation to whatever
@@ -2239,6 +3828,90 @@ void sig_dsp_Clamp_init(struct sig_dsp_Clamp* self,
 void sig_dsp_Clamp_generate(void* signal);
 void sig_dsp_Clamp_destroy(struct sig_Allocator* allocator,
     struct sig_dsp_Clamp* self);
+
+/**
+ * @brief The parameters of a SnapToInteger node.
+ */
+struct sig_dsp_SnapToInteger_Parameters {
+    /**
+     * @brief The largest distance from a whole number at which a sample
+     * snaps to it.
+     *
+     * The default of 0.0 snaps only samples that are already whole numbers.
+     */
+    float tolerance;
+};
+
+/**
+ * @brief Rounds each sample to the nearest whole number if it is within a
+ * tolerance of it, and passes the other samples through unchanged.
+ *
+ * See sig_snapToInteger.
+ *
+ * Inputs:
+ *  - source: the signal to snap
+ */
+struct sig_dsp_SnapToInteger {
+    /**
+     * @brief The signal's base state.
+     *
+     */
+    struct sig_dsp_Signal signal;
+
+    /**
+     * @brief The node's input.
+     *
+     */
+    struct sig_dsp_Signal_SingleSourceInput inputs;
+
+    /**
+     * @brief The node's parameters.
+     *
+     */
+    struct sig_dsp_SnapToInteger_Parameters parameters;
+
+    /**
+     * @brief The node's output, the snapped signal.
+     *
+     */
+    struct sig_dsp_Signal_SingleMonoOutput outputs;
+};
+
+/**
+ * @brief Creates a new SnapToInteger node.
+ *
+ * @param allocator the allocator to use
+ * @param context the signal context
+ * @return a new SnapToInteger node
+ */
+struct sig_dsp_SnapToInteger* sig_dsp_SnapToInteger_new(
+    struct sig_Allocator* allocator, struct sig_SignalContext* context);
+
+/**
+ * @brief Initialises a SnapToInteger node.
+ *
+ * @param self the node to initialise
+ * @param context the signal context
+ */
+void sig_dsp_SnapToInteger_init(struct sig_dsp_SnapToInteger* self,
+    struct sig_SignalContext* context);
+
+/**
+ * @brief Generates a block of samples.
+ *
+ * @param signal the signal to generate, cast to a
+ * struct sig_dsp_SnapToInteger*
+ */
+void sig_dsp_SnapToInteger_generate(void* signal);
+
+/**
+ * @brief Frees a SnapToInteger node.
+ *
+ * @param allocator the allocator that created the node
+ * @param self the node to free
+ */
+void sig_dsp_SnapToInteger_destroy(struct sig_Allocator* allocator,
+    struct sig_dsp_SnapToInteger* self);
 
 
 struct sig_dsp_ScaleOffset_Parameters {
@@ -2704,6 +4377,625 @@ void sig_dsp_AdditiveWavetableBankOscillator_destroy(
     struct sig_Allocator* allocator,
     struct sig_dsp_AdditiveWavetableBankOscillator* self);
 
+/**
+ * @brief The inputs of a phasor.
+ */
+struct sig_dsp_Phasor_Inputs {
+    /**
+     * @brief The phasor's frequency, in Hz.
+     *
+     */
+    float_array_ptr frequency;
+};
+
+/**
+ * @brief A phasor, which outputs a phase that ramps from 0.0 to 1.0 at its
+ * frequency.
+ *
+ * Inputs:
+ *  - frequency: the frequency, in Hz
+ */
+struct sig_dsp_Phasor {
+    /**
+     * @brief The signal's base state.
+     *
+     */
+    struct sig_dsp_Signal signal;
+
+    /**
+     * @brief The phasor's inputs.
+     *
+     */
+    struct sig_dsp_Phasor_Inputs inputs;
+
+    /**
+     * @brief The phasor's output, its phase normalized to 0.0-1.0.
+     *
+     */
+    struct sig_dsp_Signal_SingleMonoOutput outputs;
+
+    /**
+     * @brief The phasor's state.
+     *
+     */
+    struct sig_osc_Oscillator state;
+};
+
+/**
+ * @brief Initialises a phasor node.
+ *
+ * @param self the node to initialise
+ * @param context the signal context
+ */
+void sig_dsp_Phasor_init(struct sig_dsp_Phasor* self,
+    struct sig_SignalContext* context);
+
+/**
+ * @brief Creates a new phasor node.
+ *
+ * @param allocator the allocator to use
+ * @param context the signal context
+ * @return a new phasor node
+ */
+struct sig_dsp_Phasor* sig_dsp_Phasor_new(struct sig_Allocator* allocator,
+    struct sig_SignalContext* context);
+
+/**
+ * @brief Generates a block of samples.
+ *
+ * @param signal the signal to generate, cast to a struct sig_dsp_Phasor*
+ */
+void sig_dsp_Phasor_generate(void* signal);
+
+/**
+ * @brief Frees a phasor node.
+ *
+ * @param allocator the allocator that created the node
+ * @param self the node to free
+ */
+void sig_dsp_Phasor_destroy(struct sig_Allocator* allocator,
+    struct sig_dsp_Phasor* self);
+
+/**
+ * @brief The inputs of a ratio phasor.
+ */
+struct sig_dsp_RatioPhasor_Inputs {
+    /**
+     * @brief The reference phase, normalized to 0.0-1.0.
+     *
+     */
+    float_array_ptr reference;
+
+    /**
+     * @brief The ratio's numerator.
+     *
+     */
+    float_array_ptr numerator;
+
+    /**
+     * @brief The ratio's denominator.
+     *
+     */
+    float_array_ptr denominator;
+
+    /**
+     * @brief The number of octaves by which to transpose the ratio.
+     *
+     * Whole numbers of octaves keep the phasor locked to the reference.
+     */
+    float_array_ptr octaves;
+};
+
+/**
+ * @brief The parameters of a ratio phasor.
+ */
+struct sig_dsp_RatioPhasor_Parameters {
+    /**
+     * @brief The time constant of the phase correction after the ratio
+     * changes, in seconds.
+     *
+     * A value of 0.0 corrects the phase immediately.
+     */
+    float glide;
+
+    /**
+     * @brief The highest frequency at which the phasor can run, in Hz.
+     *
+     * Defaults to half the sample rate. See
+     * sig_osc_RatioPhasor_setMaxFrequency.
+     */
+    float maxFrequency;
+};
+
+/**
+ * @brief A phasor that runs at a ratio of a reference phase.
+ *
+ * See sig_osc_RatioPhasor for how the phasor locks to the reference.
+ *
+ * Inputs:
+ *  - reference: the reference phase, normalized to 0.0-1.0
+ *  - numerator: the ratio's numerator
+ *  - denominator: the ratio's denominator
+ *  - octaves: the number of octaves by which to transpose the ratio
+ */
+struct sig_dsp_RatioPhasor {
+    /**
+     * @brief The signal's base state.
+     *
+     */
+    struct sig_dsp_Signal signal;
+
+    /**
+     * @brief The phasor's inputs.
+     *
+     */
+    struct sig_dsp_RatioPhasor_Inputs inputs;
+
+    /**
+     * @brief The phasor's parameters.
+     *
+     */
+    struct sig_dsp_RatioPhasor_Parameters parameters;
+
+    /**
+     * @brief The phasor's output, its phase normalized to 0.0-1.0.
+     *
+     */
+    struct sig_dsp_Signal_SingleMonoOutput outputs;
+
+    /**
+     * @brief The phasor's state.
+     *
+     */
+    struct sig_osc_RatioPhasor state;
+
+    /**
+     * @brief The glide for which the phasor's coefficient was calculated,
+     * in seconds.
+     *
+     */
+    float previousGlide;
+
+    /**
+     * @brief The maximum frequency that the phasor's state was last set
+     * to, in Hz.
+     *
+     */
+    float previousMaxFrequency;
+};
+
+/**
+ * @brief Initialises a ratio phasor node.
+ *
+ * @param self the node to initialise
+ * @param context the signal context
+ */
+void sig_dsp_RatioPhasor_init(struct sig_dsp_RatioPhasor* self,
+    struct sig_SignalContext* context);
+
+/**
+ * @brief Creates a new ratio phasor node.
+ *
+ * @param allocator the allocator to use
+ * @param context the signal context
+ * @return a new ratio phasor node
+ */
+struct sig_dsp_RatioPhasor* sig_dsp_RatioPhasor_new(
+    struct sig_Allocator* allocator, struct sig_SignalContext* context);
+
+/**
+ * @brief Generates a block of samples.
+ *
+ * @param signal the signal to generate, cast to a struct sig_dsp_RatioPhasor*
+ */
+void sig_dsp_RatioPhasor_generate(void* signal);
+
+/**
+ * @brief Frees a ratio phasor node.
+ *
+ * @param allocator the allocator that created the node
+ * @param self the node to free
+ */
+void sig_dsp_RatioPhasor_destroy(struct sig_Allocator* allocator,
+    struct sig_dsp_RatioPhasor* self);
+
+/**
+ * @brief The inputs of a wavetable reader.
+ */
+struct sig_dsp_WavetableReader_Inputs {
+    /**
+     * @brief The phase at which to read the table, normalized to 0.0-1.0.
+     *
+     */
+    float_array_ptr phase;
+
+    /**
+     * @brief The offset added to the phase, in cycles.
+     *
+     */
+    float_array_ptr phaseOffset;
+
+    /**
+     * @brief The gain applied to the output.
+     *
+     */
+    float_array_ptr mul;
+
+    /**
+     * @brief The offset added to the output.
+     *
+     */
+    float_array_ptr add;
+};
+
+/**
+ * @brief Reads a wavetable at a phase from its inputs.
+ *
+ * Unlike sig_dsp_WavetableOscillator, the reader does not accumulate a
+ * phase of its own, so it can follow a shared phase such as the output of a
+ * sig_dsp_Phasor or sig_dsp_RatioPhasor.
+ *
+ * Inputs:
+ *  - phase: the phase at which to read, normalized to 0.0-1.0
+ *  - phaseOffset: the offset added to the phase, in cycles
+ *  - mul: the gain applied to the output
+ *  - add: the offset added to the output
+ */
+struct sig_dsp_WavetableReader {
+    /**
+     * @brief The signal's base state.
+     *
+     */
+    struct sig_dsp_Signal signal;
+
+    /**
+     * @brief The reader's inputs.
+     *
+     */
+    struct sig_dsp_WavetableReader_Inputs inputs;
+
+    /**
+     * @brief The reader's output.
+     *
+     */
+    struct sig_dsp_Signal_SingleMonoOutput outputs;
+
+    /**
+     * @brief The wavetable to read.
+     *
+     * Must be assigned before the reader is first generated.
+     */
+    struct sig_Buffer* wavetable;
+};
+
+/**
+ * @brief Initialises a wavetable reader node.
+ *
+ * @param self the node to initialise
+ * @param context the signal context
+ */
+void sig_dsp_WavetableReader_init(struct sig_dsp_WavetableReader* self,
+    struct sig_SignalContext* context);
+
+/**
+ * @brief Creates a new wavetable reader node.
+ *
+ * @param allocator the allocator to use
+ * @param context the signal context
+ * @return a new wavetable reader node
+ */
+struct sig_dsp_WavetableReader* sig_dsp_WavetableReader_new(
+    struct sig_Allocator* allocator, struct sig_SignalContext* context);
+
+/**
+ * @brief Generates a block of samples.
+ *
+ * @param signal the signal to generate, cast to a
+ * struct sig_dsp_WavetableReader*
+ */
+void sig_dsp_WavetableReader_generate(void* signal);
+
+/**
+ * @brief Frees a wavetable reader node.
+ *
+ * @param allocator the allocator that created the node
+ * @param self the node to free
+ */
+void sig_dsp_WavetableReader_destroy(struct sig_Allocator* allocator,
+    struct sig_dsp_WavetableReader* self);
+
+/**
+ * @brief The inputs of a wavetable bank reader.
+ */
+struct sig_dsp_WavetableBankReader_Inputs {
+    /**
+     * @brief The phase at which to read the bank, normalized to 0.0-1.0.
+     *
+     */
+    float_array_ptr phase;
+
+    /**
+     * @brief The offset added to the phase, in cycles.
+     *
+     */
+    float_array_ptr phaseOffset;
+
+    /**
+     * @brief The table to read, in cycles of the bank.
+     *
+     * See sig_osc_WavetableBank_tableIndex.
+     */
+    float_array_ptr tableIndex;
+
+    /**
+     * @brief The gain applied to the output.
+     *
+     */
+    float_array_ptr mul;
+
+    /**
+     * @brief The offset added to the output.
+     *
+     */
+    float_array_ptr add;
+};
+
+/**
+ * @brief Reads a bank of wavetables at a phase from its inputs.
+ *
+ * Unlike sig_dsp_WavetableBankOscillator, the reader does not accumulate a
+ * phase of its own, so it can follow a shared phase such as the output of a
+ * sig_dsp_ClockPhasor or sig_dsp_RatioPhasor.
+ *
+ * Inputs:
+ *  - phase: the phase at which to read, normalized to 0.0-1.0
+ *  - phaseOffset: the offset added to the phase, in cycles
+ *  - tableIndex: the table to read, in cycles of the bank
+ *  - mul: the gain applied to the output
+ *  - add: the offset added to the output
+ */
+struct sig_dsp_WavetableBankReader {
+    /**
+     * @brief The signal's base state.
+     *
+     */
+    struct sig_dsp_Signal signal;
+
+    /**
+     * @brief The reader's inputs.
+     *
+     */
+    struct sig_dsp_WavetableBankReader_Inputs inputs;
+
+    /**
+     * @brief The reader's output.
+     *
+     */
+    struct sig_dsp_Signal_SingleMonoOutput outputs;
+
+    /**
+     * @brief The bank of wavetables to read.
+     *
+     * Must be assigned before the reader is first generated.
+     */
+    struct sig_WavetableBank* wavetables;
+};
+
+/**
+ * @brief Initialises a wavetable bank reader node.
+ *
+ * @param self the node to initialise
+ * @param context the signal context
+ */
+void sig_dsp_WavetableBankReader_init(struct sig_dsp_WavetableBankReader* self,
+    struct sig_SignalContext* context);
+
+/**
+ * @brief Creates a new wavetable bank reader node.
+ *
+ * @param allocator the allocator to use
+ * @param context the signal context
+ * @return a new wavetable bank reader node
+ */
+struct sig_dsp_WavetableBankReader* sig_dsp_WavetableBankReader_new(
+    struct sig_Allocator* allocator, struct sig_SignalContext* context);
+
+/**
+ * @brief Generates a block of samples.
+ *
+ * @param signal the signal to generate, cast to a
+ * struct sig_dsp_WavetableBankReader*
+ */
+void sig_dsp_WavetableBankReader_generate(void* signal);
+
+/**
+ * @brief Frees a wavetable bank reader node.
+ *
+ * @param allocator the allocator that created the node
+ * @param self the node to free
+ */
+void sig_dsp_WavetableBankReader_destroy(struct sig_Allocator* allocator,
+    struct sig_dsp_WavetableBankReader* self);
+
+/**
+ * @brief The inputs of an additive wavetable bank reader.
+ */
+struct sig_dsp_AdditiveWavetableBankReader_Inputs {
+    /**
+     * @brief The phase at which to read the bank, normalized to 0.0-1.0.
+     *
+     */
+    float_array_ptr phase;
+
+    /**
+     * @brief The offset added to the phase, in cycles.
+     *
+     */
+    float_array_ptr phaseOffset;
+
+    /**
+     * @brief The frequency that selects the bank's octave, in Hz.
+     *
+     */
+    float_array_ptr frequency;
+
+    /**
+     * @brief The shape to read, in cycles of the bank.
+     *
+     */
+    float_array_ptr tableIndex;
+
+    /**
+     * @brief The gain applied to the output.
+     *
+     */
+    float_array_ptr mul;
+
+    /**
+     * @brief The offset added to the output.
+     *
+     */
+    float_array_ptr add;
+};
+
+/**
+ * @brief The parameters of an additive wavetable bank reader.
+ */
+struct sig_dsp_AdditiveWavetableBankReader_Parameters {
+    /**
+     * @brief The time with which the peak read rate falls, in seconds.
+     *
+     * When greater than 0.0, the reader selects its octave from the peak
+     * rate at which it reads, and ignores its frequency input. The default
+     * of 0.0 selects the octave from the frequency input.
+     */
+    float peakRelease;
+};
+
+/**
+ * @brief Reads an additive wavetable bank at a phase from its inputs.
+ *
+ * Unlike sig_dsp_AdditiveWavetableBankOscillator, the reader does not
+ * accumulate a phase of its own, so it can follow a shared phase such as
+ * the output of a sig_dsp_Phasor or sig_dsp_RatioPhasor. Its frequency input
+ * selects the octave to read, which should be the frequency at which the
+ * phase advances.
+ *
+ * When the phase or the phase offset is modulated, the phase can advance
+ * much faster than its frequency, and the octave's harmonics alias. With a
+ * peak release time, the reader instead selects the octave from the peak
+ * rate at which it actually reads, using a sig_osc_PeakFrequency.
+ *
+ * Inputs:
+ *  - phase: the phase at which to read, normalized to 0.0-1.0
+ *  - phaseOffset: the offset added to the phase, in cycles
+ *  - frequency: the frequency that selects the octave, in Hz
+ *  - tableIndex: the shape, in cycles of the bank
+ *  - mul: the gain applied to the output
+ *  - add: the offset added to the output
+ */
+struct sig_dsp_AdditiveWavetableBankReader {
+    /**
+     * @brief The signal's base state.
+     *
+     */
+    struct sig_dsp_Signal signal;
+
+    /**
+     * @brief The reader's inputs.
+     *
+     */
+    struct sig_dsp_AdditiveWavetableBankReader_Inputs inputs;
+
+    /**
+     * @brief The reader's parameters.
+     *
+     */
+    struct sig_dsp_AdditiveWavetableBankReader_Parameters parameters;
+
+    /**
+     * @brief The reader's output.
+     *
+     */
+    struct sig_dsp_Signal_SingleMonoOutput outputs;
+
+    /**
+     * @brief The state that selects and caches the octave to read.
+     *
+     * The reader does not use the state's phase accumulator.
+     */
+    struct sig_osc_AdditiveWavetableBank state;
+
+    /**
+     * @brief The state that measures the peak rate at which the reader
+     * reads.
+     *
+     */
+    struct sig_osc_PeakFrequency peakFrequency;
+
+    /**
+     * @brief The peak release time for which the peak frequency's
+     * coefficient was calculated, in seconds.
+     *
+     */
+    float previousPeakRelease;
+
+    /**
+     * @brief The frequency from which the octave was last selected,
+     * in Hz.
+     *
+     * Selecting an octave needs a logarithm, so the octave is only
+     * selected again when the peak frequency moves by more than 1%.
+     */
+    float levelFrequency;
+
+    /**
+     * @brief The additive wavetable bank to read.
+     *
+     * Must be assigned before the reader is first generated.
+     */
+    struct sig_AdditiveWavetableBank* wavetables;
+};
+
+/**
+ * @brief Initialises an additive wavetable bank reader node.
+ *
+ * @param self the node to initialise
+ * @param context the signal context
+ */
+void sig_dsp_AdditiveWavetableBankReader_init(
+    struct sig_dsp_AdditiveWavetableBankReader* self,
+    struct sig_SignalContext* context);
+
+/**
+ * @brief Creates a new additive wavetable bank reader node.
+ *
+ * @param allocator the allocator to use
+ * @param context the signal context
+ * @return a new additive wavetable bank reader node
+ */
+struct sig_dsp_AdditiveWavetableBankReader*
+    sig_dsp_AdditiveWavetableBankReader_new(struct sig_Allocator* allocator,
+    struct sig_SignalContext* context);
+
+/**
+ * @brief Generates a block of samples.
+ *
+ * @param signal the signal to generate, cast to a
+ * struct sig_dsp_AdditiveWavetableBankReader*
+ */
+void sig_dsp_AdditiveWavetableBankReader_generate(void* signal);
+
+/**
+ * @brief Frees an additive wavetable bank reader node.
+ *
+ * @param allocator the allocator that created the node
+ * @param self the node to free
+ */
+void sig_dsp_AdditiveWavetableBankReader_destroy(
+    struct sig_Allocator* allocator,
+    struct sig_dsp_AdditiveWavetableBankReader* self);
+
 
 struct sig_dsp_Smooth_Inputs {
     float_array_ptr source;
@@ -3124,6 +5416,387 @@ struct sig_dsp_ClockDetector* sig_dsp_ClockDetector_new(
 void sig_dsp_ClockDetector_generate(void* signal);
 void sig_dsp_ClockDetector_destroy(struct sig_Allocator* allocator,
     struct sig_dsp_ClockDetector* self);
+
+/**
+ * @brief The inputs of a clock phasor.
+ */
+struct sig_dsp_ClockPhasor_Inputs {
+    /**
+     * @brief The clock signal, whose rising edges are clock pulses.
+     *
+     */
+    float_array_ptr pulse;
+};
+
+/**
+ * @brief A phasor that follows a train of clock pulses.
+ *
+ * The phasor's output can be the reference phase of a sig_dsp_RatioPhasor,
+ * which multiplies or divides the clock. See sig_osc_ClockPhasor for how
+ * the phasor follows the clock.
+ *
+ * Inputs:
+ *  - pulse: the clock signal, whose rising edges are clock pulses
+ */
+struct sig_dsp_ClockPhasor {
+    /**
+     * @brief The signal's base state.
+     *
+     */
+    struct sig_dsp_Signal signal;
+
+    /**
+     * @brief The phasor's inputs.
+     *
+     */
+    struct sig_dsp_ClockPhasor_Inputs inputs;
+
+    /**
+     * @brief The phasor's parameters.
+     *
+     */
+    struct sig_dsp_Clock_Parameters parameters;
+
+    /**
+     * @brief The phasor's output, its phase normalized to 0.0-1.0.
+     *
+     */
+    struct sig_dsp_Signal_SingleMonoOutput outputs;
+
+    /**
+     * @brief The phasor's state.
+     *
+     */
+    struct sig_osc_ClockPhasor state;
+};
+
+/**
+ * @brief Initialises a clock phasor node.
+ *
+ * @param self the node to initialise
+ * @param context the signal context
+ */
+void sig_dsp_ClockPhasor_init(struct sig_dsp_ClockPhasor* self,
+    struct sig_SignalContext* context);
+
+/**
+ * @brief Creates a new clock phasor node.
+ *
+ * @param allocator the allocator to use
+ * @param context the signal context
+ * @return a new clock phasor node
+ */
+struct sig_dsp_ClockPhasor* sig_dsp_ClockPhasor_new(
+    struct sig_Allocator* allocator, struct sig_SignalContext* context);
+
+/**
+ * @brief Generates a block of samples.
+ *
+ * @param signal the signal to generate, cast to a struct sig_dsp_ClockPhasor*
+ */
+void sig_dsp_ClockPhasor_generate(void* signal);
+
+/**
+ * @brief Frees a clock phasor node.
+ *
+ * @param allocator the allocator that created the node
+ * @param self the node to free
+ */
+void sig_dsp_ClockPhasor_destroy(struct sig_Allocator* allocator,
+    struct sig_dsp_ClockPhasor* self);
+
+/**
+ * @brief The slowest tempo that a tempo detector supports, in beats
+ * per minute.
+ */
+#define sig_dsp_TempoDetector_LOWEST_TEMPO 30.0f
+
+/**
+ * @brief The fastest tempo that a tempo detector supports, in beats
+ * per minute.
+ */
+#define sig_dsp_TempoDetector_HIGHEST_TEMPO 200.0f
+
+/**
+ * @brief The inputs of a tempo detector.
+ */
+struct sig_dsp_TempoDetector_Inputs {
+    /**
+     * @brief The audio to analyse, where 1.0 is full scale.
+     */
+    float_array_ptr source;
+
+    /**
+     * @brief The sync signal, whose rises to 0.5 or above tap beats.
+     */
+    float_array_ptr sync;
+};
+
+/**
+ * @brief The parameters of a tempo detector.
+ */
+struct sig_dsp_TempoDetector_Parameters {
+    /**
+     * @brief The level below which the onset detector ignores sound.
+     *
+     * In dB relative to a full-scale sine, from -90 to -30. Defaults
+     * to -70.
+     */
+    float threshold;
+
+    /**
+     * @brief The slowest tempo that the detector allows.
+     *
+     * In beats per minute, from 30 to 200. Defaults to 30.
+     */
+    float minTempo;
+
+    /**
+     * @brief The fastest tempo that the detector allows.
+     *
+     * In beats per minute, from 30 to 200. Defaults to 200.
+     */
+    float maxTempo;
+
+    /**
+     * @brief How strongly the follower corrects its phase and tempo.
+     *
+     * From 0 to 1. Defaults to 0.6.
+     */
+    float responsiveness;
+
+    /**
+     * @brief How far ahead of each predicted beat the clock fires.
+     *
+     * In seconds, from 0 to 0.25. Defaults to 0.
+     */
+    float lead;
+
+    /**
+     * @brief The length of each clock trigger.
+     *
+     * In seconds, from 0.001 to 0.1. Defaults to 0.01.
+     */
+    float triggerDuration;
+
+    /**
+     * @brief Whether the clock mutes, 0, or free-runs, 1, while the
+     * follower is silent.
+     *
+     * Defaults to 0.
+     */
+    float silenceBehaviour;
+
+    /**
+     * @brief How many beats without a strong beat make the follower
+     * silent.
+     *
+     * From 1 to 16. Defaults to 4.
+     */
+    float silenceTimeout;
+};
+
+/**
+ * @brief The outputs of a tempo detector.
+ */
+struct sig_dsp_TempoDetector_Outputs {
+    /**
+     * @brief The clock, which is 1 during each trigger and 0 otherwise.
+     */
+    float_array_ptr clock;
+
+    /**
+     * @brief The beat phase, shifted earlier by the lead, from 0 to 1.
+     *
+     * Zero while the clock is muted.
+     */
+    float_array_ptr phase;
+
+    /**
+     * @brief The detected tempo, in beats per minute.
+     *
+     * Zero before the first tempo estimate.
+     */
+    float_array_ptr bpm;
+
+    /**
+     * @brief The follower's confidence, from 0 to 1.
+     */
+    float_array_ptr confidence;
+};
+
+/**
+ * @brief Allocates a tempo detector's output blocks.
+ *
+ * @param allocator the allocator to use
+ * @param audioSettings the audio settings that determine the block size
+ * @param outputs the outputs to allocate
+ */
+void sig_dsp_TempoDetector_Outputs_newAudioBlocks(
+    struct sig_Allocator* allocator,
+    struct sig_AudioSettings* audioSettings,
+    struct sig_dsp_TempoDetector_Outputs* outputs);
+
+/**
+ * @brief Frees a tempo detector's output blocks.
+ *
+ * @param allocator the allocator that allocated the blocks
+ * @param outputs the outputs to free
+ */
+void sig_dsp_TempoDetector_Outputs_destroyAudioBlocks(
+    struct sig_Allocator* allocator,
+    struct sig_dsp_TempoDetector_Outputs* outputs);
+
+/**
+ * @brief A tempo detector that listens to live music and outputs a clock
+ * that follows its beat.
+ *
+ * The detector runs four stages. A sig_tempo_OnsetDetector converts the
+ * audio into an onset strength envelope, a sig_tempo_TempoEstimator
+ * estimates its tempo, a sig_tempo_BeatTracker finds its beats and
+ * follows them with a beat phase, and a sig_tempo_ClockGenerator
+ * converts the phase into triggers. The detector chooses the onset
+ * detector's window length, the power of two nearest to 46.4 ms of
+ * samples, and its hop length, the sample rate divided by 86.13, from
+ * the sample rate. It supports tempos from 30 to 200 BPM. It reads its
+ * parameters at the start of each block. When the sync input rises to
+ * 0.5 or above, the detector taps the beat tracker on that sample.
+ *
+ * Inputs:
+ *  - source: the audio to analyse
+ *  - sync: taps that set the beat's phase and tempo
+ */
+struct sig_dsp_TempoDetector {
+    /**
+     * @brief The signal's base state.
+     */
+    struct sig_dsp_Signal signal;
+
+    /**
+     * @brief The detector's inputs.
+     */
+    struct sig_dsp_TempoDetector_Inputs inputs;
+
+    /**
+     * @brief The detector's parameters.
+     */
+    struct sig_dsp_TempoDetector_Parameters parameters;
+
+    /**
+     * @brief The detector's outputs.
+     */
+    struct sig_dsp_TempoDetector_Outputs outputs;
+
+    /**
+     * @brief The onset detector's window length, in samples.
+     */
+    size_t windowLength;
+
+    /**
+     * @brief The onset detector's hop length, in samples.
+     */
+    size_t hopLength;
+
+    /**
+     * @brief The onset detector's latency, which the beat tracker
+     * subtracts from beat times.
+     *
+     * In samples, (windowLength - hopLength) / 2.
+     */
+    float latency;
+
+    /**
+     * @brief The onset detector.
+     */
+    struct sig_tempo_OnsetDetector* onsetDetector;
+
+    /**
+     * @brief The tempo estimator.
+     */
+    struct sig_tempo_TempoEstimator* tempoEstimator;
+
+    /**
+     * @brief The beat tracker.
+     */
+    struct sig_tempo_BeatTracker* beatTracker;
+
+    /**
+     * @brief The clock generator.
+     */
+    struct sig_tempo_ClockGenerator clockGenerator;
+
+    /**
+     * @brief The tempo estimator's most recent estimate, in beats per
+     * minute.
+     */
+    float tempoEstimate;
+
+    /**
+     * @brief The sync input's value on the previous sample.
+     */
+    float previousSync;
+};
+
+/**
+ * @brief Calculates a tempo detector's window length, the power of two
+ * nearest to 46.4 ms of samples.
+ *
+ * @param sampleRate the sample rate in Hz
+ * @return the window length in samples
+ */
+size_t sig_dsp_TempoDetector_calcWindowLength(float sampleRate);
+
+/**
+ * @brief Calculates a tempo detector's hop length, the sample rate
+ * divided by 86.13, rounded to the nearest sample.
+ *
+ * @param sampleRate the sample rate in Hz
+ * @return the hop length in samples
+ */
+size_t sig_dsp_TempoDetector_calcHopLength(float sampleRate);
+
+/**
+ * @brief Initialises a tempo detector's parameters, clock generator,
+ * and inputs.
+ *
+ * The detector's onset detector, tempo estimator, and beat tracker must
+ * already be allocated and initialised, as sig_dsp_TempoDetector_new
+ * does.
+ *
+ * @param self the detector to initialise
+ * @param context the signal context
+ */
+void sig_dsp_TempoDetector_init(struct sig_dsp_TempoDetector* self,
+    struct sig_SignalContext* context);
+
+/**
+ * @brief Allocates and initialises a tempo detector and its stages.
+ *
+ * @param allocator the allocator to use
+ * @param context the signal context, whose sample rate determines the
+ * window and hop lengths
+ * @return the new detector
+ */
+struct sig_dsp_TempoDetector* sig_dsp_TempoDetector_new(
+    struct sig_Allocator* allocator, struct sig_SignalContext* context);
+
+/**
+ * @brief Generates a block of the detector's outputs.
+ *
+ * @param signal the signal to generate, cast to a struct
+ * sig_dsp_TempoDetector*
+ */
+void sig_dsp_TempoDetector_generate(void* signal);
+
+/**
+ * @brief Frees a tempo detector and its stages.
+ *
+ * @param allocator the allocator that created the detector
+ * @param self the detector to free
+ */
+void sig_dsp_TempoDetector_destroy(struct sig_Allocator* allocator,
+    struct sig_dsp_TempoDetector* self);
+
 
 
 
@@ -4074,6 +6747,12 @@ inline float sig_clamp(float value, float min, float max) {
     return sig_fminf(sig_fmaxf(value, min), max);
 }
 
+inline float sig_snapToInteger(float value, float tolerance) {
+    float nearest = roundf(value);
+
+    return fabsf(value - nearest) <= tolerance ? nearest : value;
+}
+
 inline float sig_fastMod1f(float x) {
     int32_t ix = (int32_t) x;
     float r = x - (float) ix;
@@ -4432,10 +7111,19 @@ inline float sig_osc_Oscillator_wrapPhase(float phase) {
 
 inline void sig_osc_Oscillator_accumulatePhase(
     float* phaseAccumulator, float frequency, float sampleRate) {
-    float phaseStep = frequency / sampleRate;
+    // Division is slow, so the frequency is multiplied by the sample
+    // period. When this is called in a loop, the compiler calculates the
+    // sample period once, outside the loop.
+    float phaseStep = frequency * (1.0f / sampleRate);
     float phase = *phaseAccumulator + phaseStep;
 
-    *phaseAccumulator = sig_osc_Oscillator_wrapPhase(phase);
+    // The phase usually stays within 0.0-1.0, where wrapping would return
+    // it unchanged, so it is only wrapped when it leaves that range.
+    if (phase >= 1.0f || phase < 0.0f) {
+        phase = sig_osc_Oscillator_wrapPhase(phase);
+    }
+
+    *phaseAccumulator = phase;
 }
 
 inline float sig_osc_Wavetable_generate(
@@ -4471,13 +7159,10 @@ inline float sig_osc_WavetableBank_generate(
         return sample;
 }
 
-inline float sig_osc_AdditiveWavetableBank_generate(
-    struct sig_osc_AdditiveWavetableBank* self, float frequency,
-    float phaseOffset, float tableIndex, float sampleRate, float* eocOut) {
+inline float sig_osc_AdditiveWavetableBank_readAtPhase(
+    struct sig_osc_AdditiveWavetableBank* self, float frequency, float phase,
+    float tableIndex) {
     float waveIdx = tableIndex * (float) self->wavetables->numShapes;
-    float modulatedPhase = self->phaseAccumulator + phaseOffset;
-    *eocOut = sig_osc_Oscillator_eoc(modulatedPhase);
-    modulatedPhase = sig_osc_Oscillator_wrapPhase(modulatedPhase);
 
     // Logarithms are expensive, so the level is only
     // recalculated when the frequency changes.
@@ -4487,12 +7172,137 @@ inline float sig_osc_AdditiveWavetableBank_generate(
         self->previousFrequency = frequency;
     }
 
-    float sample = sig_AdditiveWavetableBank_readLinearAtPhase(
-        self->wavetables, self->level, waveIdx, modulatedPhase);
+    return sig_AdditiveWavetableBank_readLinearAtPhase(self->wavetables,
+        self->level, waveIdx, phase);
+}
+
+inline float sig_osc_AdditiveWavetableBank_generate(
+    struct sig_osc_AdditiveWavetableBank* self, float frequency,
+    float phaseOffset, float tableIndex, float sampleRate, float* eocOut) {
+    float modulatedPhase = self->phaseAccumulator + phaseOffset;
+    *eocOut = sig_osc_Oscillator_eoc(modulatedPhase);
+    float sample = sig_osc_AdditiveWavetableBank_readAtPhase(self, frequency,
+        sig_osc_Oscillator_wrapPhase(modulatedPhase), tableIndex);
     sig_osc_Oscillator_accumulatePhase(&self->phaseAccumulator,
         frequency, sampleRate);
 
     return sample;
+}
+
+inline float sig_osc_RatioPhasor_generate(struct sig_osc_RatioPhasor* self,
+    float reference, float numerator, float denominator, float octaves) {
+    if (denominator <= 0.0f) {
+        denominator = 1.0f;
+    }
+
+    // Transposing by whole octaves multiplies the numerator when going up
+    // and the denominator when going down, so a ratio of whole numbers
+    // stays a ratio of whole numbers.
+    if (octaves == roundf(octaves)) {
+        if (octaves > 0.0f) {
+            numerator = ldexpf(numerator, (int) octaves);
+        } else if (octaves < 0.0f) {
+            denominator = ldexpf(denominator, (int) -octaves);
+        }
+    } else {
+        numerator *= exp2f(octaves);
+    }
+
+    // A reference that moves by close to a whole cycle has wrapped, so
+    // removing the whole cycles leaves its actual increment.
+    float delta = reference - self->previousReference;
+    float wraps = roundf(delta);
+    delta -= wraps;
+    self->previousReference = reference;
+
+    // Only whole denominators lock, and the cycle count needs at least one
+    // cycle per period, so other denominators count a period of one cycle.
+    // The largest float below 2^32 keeps the conversion in range.
+    const uint32_t periodCycles = denominator >= 1.0f &&
+        denominator <= 4294967040.0f ? (uint32_t) denominator : 1;
+    uint32_t cycle = self->cycle;
+    // Division is slow, so the cycle is only wrapped when the denominator
+    // has decreased below it.
+    if (cycle >= periodCycles) {
+        cycle %= periodCycles;
+    }
+    if (wraps < 0.0f) {
+        cycle = (cycle + 1) % periodCycles;
+    } else if (wraps > 0.0f) {
+        cycle = (cycle + periodCycles - 1) % periodCycles;
+    }
+    self->cycle = cycle;
+
+    float ratio = numerator / denominator;
+    float increment = delta * ratio;
+    bool isLimited = fabsf(increment) > self->maxIncrement;
+    if (isLimited) {
+        increment = copysignf(self->maxIncrement, increment);
+    }
+    float phase = self->phase + increment;
+
+    if (!isLimited && numerator == roundf(numerator) &&
+        denominator == roundf(denominator)) {
+        float locked = ((float) cycle + reference) * ratio;
+        float error = locked - phase;
+        error -= roundf(error);
+        phase += error * self->correction;
+    }
+
+    // The phase usually stays within 0.0-1.0, where wrapping would return
+    // it unchanged, so it is only wrapped when it leaves that range.
+    if (phase >= 1.0f || phase < 0.0f) {
+        phase = sig_osc_Oscillator_wrapPhase(phase);
+    }
+    self->phase = phase;
+
+    return phase;
+}
+
+inline float sig_osc_PeakFrequency_generate(
+    struct sig_osc_PeakFrequency* self, float phase, float sampleRate) {
+    // A phase that moves by close to a whole cycle has wrapped, so removing
+    // the whole cycles leaves its actual movement.
+    float delta = phase - self->previousPhase;
+    delta -= roundf(delta);
+    float frequency = self->hasPreviousPhase ?
+        fabsf(delta) * sampleRate : 0.0f;
+    self->previousPhase = phase;
+    self->hasPreviousPhase = true;
+
+    float releasedPeak = self->peak * self->release;
+    self->peak = frequency > releasedPeak ? frequency : releasedPeak;
+
+    return self->peak;
+}
+
+inline float sig_osc_ClockPhasor_generate(struct sig_osc_ClockPhasor* self,
+    float pulse, float threshold) {
+    self->samplesSinceLastPulse++;
+
+    if (pulse >= threshold && self->previousPulse < threshold) {
+        if (self->hasPulsed) {
+            float period = (float) self->samplesSinceLastPulse;
+            float error = roundf(self->phase) - self->phase;
+            self->increment = 1.0f / period;
+            self->correction = error / period;
+            self->correctionSamples = self->samplesSinceLastPulse;
+        }
+
+        self->hasPulsed = true;
+        self->samplesSinceLastPulse = 0;
+    }
+    self->previousPulse = pulse;
+
+    float phase = self->phase;
+    float increment = self->increment;
+    if (self->correctionSamples > 0) {
+        increment += self->correction;
+        self->correctionSamples--;
+    }
+    self->phase = sig_osc_Oscillator_wrapPhase(phase + increment);
+
+    return phase;
 }
 
 inline void sig_osc_FastLFSine_setFrequency(
@@ -4796,6 +7606,163 @@ inline float sig_softClip(float x, float threshold) {
         headroom * sig_fastTanhf((magnitude - threshold) / headroom);
 
     return (x < 0.0f) ? -shaped : shaped;
+}
+
+inline bool sig_tempo_OnsetDetector_hasNewValue(
+    struct sig_tempo_OnsetDetector* self) {
+    return self->hasNewValue;
+}
+
+inline void sig_tempo_OnsetDetector_setThreshold(
+    struct sig_tempo_OnsetDetector* self, float threshold) {
+    if (threshold == self->threshold) {
+        return;
+    }
+
+    self->threshold = threshold;
+    self->thresholdMagnitude = powf(10.0f, threshold / 20.0f);
+}
+
+inline void sig_tempo_TempoEstimator_setTempoRange(
+    struct sig_tempo_TempoEstimator* self, float minTempo, float maxTempo) {
+    if (minTempo > maxTempo) {
+        float swap = minTempo;
+        minTempo = maxTempo;
+        maxTempo = swap;
+    }
+
+    self->minTempo = sig_clamp(minTempo, self->lowestTempo,
+        self->highestTempo);
+    self->maxTempo = sig_clamp(maxTempo, self->lowestTempo,
+        self->highestTempo);
+}
+
+inline float sig_tempo_BeatTracker_follow(struct sig_tempo_BeatTracker* self) {
+    self->sampleClock += 1.0;
+    if (self->state == sig_tempo_BeatTracker_State_WAITING) {
+        return 0.0f;
+    }
+
+    // The output chases the grid's beat position along the shorter way
+    // around the beat, at a limited rate.
+    double gridPosition = (self->sampleClock - self->anchor) / self->period;
+    double gap = gridPosition - self->position;
+    gap -= floor(gap + 0.5);
+    double rate = 1.0 + sig_tempo_BeatTracker_CHASE_GAIN * gap;
+    if (rate < sig_tempo_BeatTracker_MIN_RATE) {
+        rate = sig_tempo_BeatTracker_MIN_RATE;
+    } else if (rate > sig_tempo_BeatTracker_MAX_RATE) {
+        rate = sig_tempo_BeatTracker_MAX_RATE;
+    }
+    self->position += rate / self->period;
+
+    float phase = (float) (self->position - floor(self->position));
+
+    return phase < 1.0f ? phase : 0.0f;
+}
+
+inline float sig_tempo_BeatTracker_tempo(struct sig_tempo_BeatTracker* self) {
+    if (self->state == sig_tempo_BeatTracker_State_WAITING) {
+        return 0.0f;
+    }
+
+    return (float) (60.0 * (double) self->sampleRate / self->period);
+}
+
+inline float sig_tempo_BeatTracker_confidence(
+    struct sig_tempo_BeatTracker* self) {
+    return self->state == sig_tempo_BeatTracker_State_TRACKING ?
+        self->confidence : 0.0f;
+}
+
+inline enum sig_tempo_BeatTracker_State sig_tempo_BeatTracker_state(
+    struct sig_tempo_BeatTracker* self) {
+    return self->state;
+}
+
+inline void sig_tempo_BeatTracker_setResponsiveness(
+    struct sig_tempo_BeatTracker* self, float responsiveness) {
+    self->responsiveness = sig_clamp(responsiveness, 0.0f, 1.0f);
+}
+
+inline void sig_tempo_BeatTracker_setTempoRange(
+    struct sig_tempo_BeatTracker* self, float minTempo, float maxTempo) {
+    if (minTempo > maxTempo) {
+        float swap = minTempo;
+        minTempo = maxTempo;
+        maxTempo = swap;
+    }
+
+    self->minTempo = sig_clamp(minTempo, self->lowestTempo,
+        self->highestTempo);
+    self->maxTempo = sig_clamp(maxTempo, self->lowestTempo,
+        self->highestTempo);
+}
+
+inline void sig_tempo_BeatTracker_setSilenceTimeout(
+    struct sig_tempo_BeatTracker* self, float silenceTimeout) {
+    self->silenceTimeout = sig_clamp(silenceTimeout, 1.0f, 16.0f);
+}
+
+inline void sig_tempo_ClockGenerator_setLead(
+    struct sig_tempo_ClockGenerator* self, float lead) {
+    self->lead = sig_clamp(lead, 0.0f, 0.25f);
+}
+
+inline void sig_tempo_ClockGenerator_setTriggerDuration(
+    struct sig_tempo_ClockGenerator* self, float triggerDuration) {
+    self->triggerDuration = sig_clamp(triggerDuration, 0.001f, 0.1f);
+    float samples = roundf(self->triggerDuration * self->sampleRate);
+    self->triggerSamples = samples < 1.0f ? 1 : (uint32_t) samples;
+}
+
+inline void sig_tempo_ClockGenerator_setSilenceBehaviour(
+    struct sig_tempo_ClockGenerator* self, float silenceBehaviour) {
+    self->silenceBehaviour = silenceBehaviour;
+}
+
+inline void sig_tempo_ClockGenerator_generate(
+    struct sig_tempo_ClockGenerator* self, float phase, float tempo,
+    float confidence, enum sig_tempo_BeatTracker_State state,
+    struct sig_tempo_ClockGenerator_Outputs* outputs) {
+    bool isActive = state == sig_tempo_BeatTracker_State_TRACKING ||
+        (state == sig_tempo_BeatTracker_State_SILENT &&
+            self->silenceBehaviour >= 0.5f);
+    float shiftedPhase = 0.0f;
+
+    if (isActive) {
+        shiftedPhase = phase + self->lead * tempo / 60.0f;
+        shiftedPhase -= floorf(shiftedPhase);
+        if (shiftedPhase >= 1.0f) {
+            shiftedPhase = 0.0f;
+        }
+
+        // No trigger has fired for the current beat when the clock
+        // becomes active.
+        if (!self->wasActive ||
+            (shiftedPhase >= sig_tempo_ClockGenerator_ARM_START &&
+                shiftedPhase < sig_tempo_ClockGenerator_ARM_END)) {
+            self->isArmed = true;
+        }
+
+        if (self->isArmed && self->previousPhase - shiftedPhase > 0.5f) {
+            self->isArmed = false;
+            self->triggerSamplesRemaining = self->triggerSamples;
+        }
+    } else {
+        self->triggerSamplesRemaining = 0;
+    }
+
+    outputs->clock = self->triggerSamplesRemaining > 0 ? 1.0f : 0.0f;
+    if (self->triggerSamplesRemaining > 0) {
+        self->triggerSamplesRemaining--;
+    }
+    outputs->phase = shiftedPhase;
+    outputs->bpm = tempo;
+    outputs->confidence = confidence;
+
+    self->previousPhase = shiftedPhase;
+    self->wasActive = isActive;
 }
 
 #ifdef __cplusplus

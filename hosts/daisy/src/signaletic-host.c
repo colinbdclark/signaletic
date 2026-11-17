@@ -38,13 +38,23 @@ void sig_host_GateIn_init(struct sig_host_GateIn* self,
 void sig_host_GateIn_generate(void* signal) {
     struct sig_host_GateIn* self = (struct sig_host_GateIn*) signal;
     struct sig_host_HardwareInterface* hardware = self->hardware;
-    float scale = self->parameters.scale;
-    float offset = self->parameters.offset;
-    int control = self->parameters.control;
+    const size_t blockSize = self->signal.audioSettings->blockSize;
+    const float scale = self->parameters.scale;
+    const float offset = self->parameters.offset;
+    const int control = self->parameters.control;
+    float* SIG_RESTRICT out = FLOAT_ARRAY(self->outputs.main);
+    const float* SIG_RESTRICT gateBlock = hardware->gateInputBlocks != NULL ?
+        hardware->gateInputBlocks[control] : NULL;
 
-    for (size_t i = 0; i < self->signal.audioSettings->blockSize; i++) {
-        float sample = hardware->gateInputs[control];
-        FLOAT_ARRAY(self->outputs.main)[i] = sample * scale + offset;
+    if (gateBlock != NULL) {
+        for (size_t i = 0; i < blockSize; i++) {
+            out[i] = gateBlock[i] * scale + offset;
+        }
+    } else {
+        const float sample = hardware->gateInputs[control];
+        for (size_t i = 0; i < blockSize; i++) {
+            out[i] = sample * scale + offset;
+        }
     }
 }
 

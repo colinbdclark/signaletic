@@ -51,7 +51,9 @@ void sig::libdaisy::patchsm::PatchSMBoard::Init(size_t blockSize, float sampleRa
     // Audio Init
     SaiHandle::Config sai_config;
     sai_config.periph = SaiHandle::Config::Peripheral::SAI_1;
-    sai_config.sr = SaiHandle::Config::SampleRate::SAI_48KHZ;
+    // libDaisy's audio handle runs at the serial audio interface's rate,
+    // so the interface is configured with the requested rate.
+    sai_config.sr = sampleRateFromFloat(sampleRate);
     sai_config.bit_depth = SaiHandle::Config::BitDepth::SAI_24BIT;
     sai_config.a_sync = SaiHandle::Config::Sync::MASTER; // Srsly, Electrosmith?
     sai_config.b_sync = SaiHandle::Config::Sync::SLAVE;  // Ooof!
